@@ -29,6 +29,7 @@ def init_ipm(parts: list[Trimesh],
                                        "pcg_iter_1": 200,
                                        "pcg_iter_2": 100,
                                        "conv_eps": 1E-5,
+                                       "pcg_eps": 1E-6,
                                        "x_eps": 1E-6,
                                        "float_type": torch.float32,
                                    })
@@ -129,7 +130,7 @@ def precond(diagQ, GG, s, z):
 def inf_norm(x):
     return torch.max(torch.abs(x), dim=0).values
 
-def ipm_solve_rhs(Q, s, z, invM, v1, v2, v3, dx = None, n_iter = 50, eval_it = 10, rbe = None):
+def ipm_solve_rhs(Q, s, z, invM, v1, v2, v3, dx = None, eps = 1E-6, n_iter = 50, eval_it = 10, rbe = None):
 
     ZS = z / s
     b = GT_((z * v3 - v2) / s, rbe) + v1
@@ -149,7 +150,7 @@ def ipm_solve_rhs(Q, s, z, invM, v1, v2, v3, dx = None, n_iter = 50, eval_it = 1
     pk = uk.clone()
 
     n_iter = n_iter // eval_it
-
+    inds = torch.arange(b.shape[1], device=device, dtype=torch.long)
     #torch.cuda.synchronize()
     #timer = perf_counter()
     for k in range(n_iter):
@@ -166,21 +167,20 @@ def ipm_solve_rhs(Q, s, z, invM, v1, v2, v3, dx = None, n_iter = 50, eval_it = 1
 
         # to avoid numerical error
         error = inf_norm(rk)
-        flag = error < dx_rk
-        dx[:, flag] = xk[:, flag]
-        dx_rk[flag] = error[flag]
-        rk = b - (GTZSG(xk, ZS, rbe) + Q @ xk)
-        uk = invM * rk
-
-        #dx_rk[inds] = torch.minimum(error, dx_rk[inds])
-        #print(dx_rk)
+        flag = error < dx_rk[inds]
+        dx[:, inds[flag]] = xk[:, flag]
+        dx_rk[inds[flag]] = error[flag]
 
         # flag = error > eps
         # inds = inds[flag]
         # xk, rk, uk, pk = xk[:, flag], rk[:, flag], uk[:, flag], pk[:, flag]
         # ZS, invM = ZS[:, flag], invM[:, flag]
+        #
         # if inds.shape[0] == 0:
-        #     break
+        #      break
+
+        rk = b[:, inds] - (GTZSG(xk, ZS, rbe) + Q @ xk)
+        uk = invM * rk
 
     #torch.cuda.synchronize()
     # pcg_time = (perf_counter() - timer)
@@ -255,7 +255,9 @@ def simulate_ipm(batch_part_states: list[dict],
     # ipm
     torch.cuda.synchronize()
     timer_start = perf_counter()
+    kkt_res_best = torch.ones(part_states.shape[0], device=device, dtype=floatType) * torch.inf
 
+    r1, r2, r3, kkt_res = ipm_kkt_res(Q, q, h, rbe, x, s, z)
     while it < ipm.ipm_iter:
 
         #print("step ", it)
@@ -267,25 +269,15 @@ def simulate_ipm(batch_part_states: list[dict],
 
         #torch.cuda.synchronize()
         #timer = perf_counter()
-        r1, r2, r3, kkt_res = ipm_kkt_res(Q, q, h, rbe, x, s, z)
         #torch.cuda.synchronize()
         #print("ipm_kkt_res", perf_counter() - timer)
         #print("kkt_res", torch.max(kkt_res, 0).values)
         #print("kkt_res", kkt_res)
 
-        # remove converged
-        flag = kkt_res > ipm.conv_eps
-        inds = inds[flag]
-        q, h, x, s, z, invM = q[:, flag], h[:, flag], x[:, flag], s[:, flag], z[:, flag], invM[:, flag]
-        r1, r2, r3 = r1[:, flag], r2[:, flag], r3[:, flag]
-
-        if inds.shape[0] == 0:
-            break
-
         # update
         #torch.cuda.synchronize()
         #timer = perf_counter()
-        dx_a, ds_a, dz_a = ipm_solve_rhs(Q, s, z, invM, -r1, -r2, -r3, n_iter = ipm.pcg_iter_1, eval_it=ipm.pcg_eval_it, rbe = rbe)
+        dx_a, ds_a, dz_a = ipm_solve_rhs(Q, s, z, invM, -r1, -r2, -r3, n_iter = ipm.pcg_iter_1, eval_it=ipm.pcg_eval_it, rbe = rbe, eps = ipm.pcg_eps)
         #torch.cuda.synchronize()
         #print("ipm_solve_rhs_1", perf_counter() - timer)
 
@@ -304,7 +296,7 @@ def simulate_ipm(batch_part_states: list[dict],
 
         # option 2
         r2 = (sigma * mu - (ds_a * dz_a))
-        dx, ds, dz = ipm_solve_rhs(Q, s, z, invM, 0, r2, 0, n_iter= ipm.pcg_iter_2, eval_it=ipm.pcg_eval_it, rbe = rbe)
+        dx, ds, dz = ipm_solve_rhs(Q, s, z, invM, 0, r2, 0, n_iter= ipm.pcg_iter_2, eval_it=ipm.pcg_eval_it, rbe = rbe, eps = ipm.pcg_eps)
         dx, ds, dz = dx + dx_a, ds + ds_a, dz + dz_a
 
         #torch.cuda.synchronize()
@@ -316,11 +308,27 @@ def simulate_ipm(batch_part_states: list[dict],
         #torch.cuda.synchronize()
         #print("linesearch", perf_counter() - timer)
 
-
         x = x + alpha * dx
         s = s + alpha * ds
         z = z + alpha * dz
-        result_x[:, inds] = x
+
+        # update inds
+        r1, r2, r3, kkt_res = ipm_kkt_res(Q, q, h, rbe, x, s, z)
+        flag = kkt_res_best[inds] > kkt_res
+        kkt_res_best[inds[flag]] = kkt_res[flag]
+        result_x[:, inds[flag]] = x[:, flag]
+
+        # remove converged
+        flag = kkt_res > ipm.conv_eps
+        inds = inds[flag]
+        q, h, x, s, z, invM = q[:, flag], h[:, flag], x[:, flag], s[:, flag], z[:, flag], invM[:, flag]
+        r1, r2, r3 = r1[:, flag], r2[:, flag], r3[:, flag]
+
+        if inds.shape[0] == 0:
+            break
+
+        #print(kkt_res)
+
         it = it + 1
 
     xclip = torch.clip(result_x, xl, xu)
@@ -557,14 +565,17 @@ if __name__ == '__main__':
     default_settings['rbe']['Ccp'] = 500
     default_settings["assembly"]["contact_shrink_ratio"] = 0 # for robustnessly computing the contact surfaces
 
-    n_batch = 2048
+    n_batch = 512
     torch.manual_seed(0)
     name = "dome"
     parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + f"/{name}")
 
     filename = os.path.join(RESOURCE_DIR, f"curriculum/{name}_back2.pol")
     part_states = torch.load(filename)['input']
-    part_states = part_states[torch.randperm(part_states.shape[0]), :]
+    inds = torch.sum(part_states, dim=1).cpu().numpy()
+    inds = np.argsort(inds).tolist()[::-1]
+    part_states = part_states[inds, :]
+    #part_states = part_states[torch.randperm(part_states.shape[0]), :]
     part_states = part_states[:n_batch, :]
     #dataset = {'input': part_states}
     # torch.save(dataset, os.path.join(RESOURCE_DIR, f"curriculum/{name}.pt"))
@@ -577,8 +588,9 @@ if __name__ == '__main__':
     #default_settings['gurobi'] = {}
     default_settings['ipm'] = {
         'float_type': torch.float32,
-        "ipm_iter": 20,
-        "pcg_iter_1": 100,
+        "ipm_iter": 30,
+        "conv_eps": 1E-5,
+        "pcg_iter_1": 200,
         "pcg_iter_2": 50,
         "pcg_eval_it": 10,
     }
