@@ -555,7 +555,7 @@ if __name__ == '__main__':
     from learn2assemble.render import *
     from learn2assemble.assembly import load_assembly_from_files, compute_assembly_contacts
     #import polyscope as ps
-    #import os
+    import os
 
     #init_polyscope()
 
