@@ -303,7 +303,7 @@ if __name__ == '__main__':
     succeed, solution, curriculum, policy_dataset = forward_curriculum(parts, contacts, None, None, default_settings)
     print("succeed:\t", succeed)
 
-    filename = os.path.join(RESOURCE_DIR, "curriculum/dome.pt")
+    filename = os.path.join(RESOURCE_DIR, "curriculum/dome_back.pol")
 
     input = np.vstack(policy_dataset['input'])
     policy_dataset['input'] = torch.tensor(input, dtype=torch.int32, device="cpu")

@@ -25,10 +25,10 @@ def init_ipm(parts: list[Trimesh],
     ipm = update_default_settings(settings,
                                    "ipm",
                                   {
-                                       "ipm_iter": 20,
-                                       "pcg_iter": 50,
-                                       "conv_eps": 1E-4,
-                                       "pcg_eps": 1E-9,
+                                       "ipm_iter": 25,
+                                       "pcg_iter_1": 200,
+                                       "pcg_iter_2": 100,
+                                       "conv_eps": 1E-5,
                                        "x_eps": 1E-6,
                                        "float_type": torch.float32,
                                    })
@@ -112,7 +112,7 @@ def GTZSG(p, ZS, rbe):
     λ3 = p[rbe.nλn * 2 + nx:]
     return λ3 - λ2 + λ0
 
-def ipm_solve_rhs(Q, G, GT, s, z, invM, v1, v2, v3, dx = None, eps = 1E-5, n_iter = 50, rbe = None):
+def ipm_solve_rhs(Q, G, GT, s, z, invM, v1, v2, v3, dx = None, n_iter = 50, rbe = None):
     ZS = z / s
     b = GT @ ((z * v3 - v2) / s) + v1
     if dx is None:
@@ -121,14 +121,15 @@ def ipm_solve_rhs(Q, G, GT, s, z, invM, v1, v2, v3, dx = None, eps = 1E-5, n_ite
         rk = b.clone()
     else:
         xk = dx.clone()
-        rk = b - (GT @ (ZS * (G @ dx)) + Q @ dx)
+        rk = b - (GTZSG(dx, ZS, rbe) + Q @ dx)
         dx = torch.zeros_like(b)
+
+    dx_rk = torch.ones(b.shape[1], device=device, dtype=b.dtype) * torch.inf
 
     uk = invM * rk
     pk = uk.clone()
-    inds = torch.arange(b.shape[1], device=b.device, dtype=torch.long)
 
-    eval_it = 10
+    eval_it = 50
     n_iter = n_iter // eval_it
 
     torch.cuda.synchronize()
@@ -146,11 +147,21 @@ def ipm_solve_rhs(Q, G, GT, s, z, invM, v1, v2, v3, dx = None, eps = 1E-5, n_ite
             pk = uk + betak[None, :] * pk
 
         # to avoid numerical error
-        flag = inf_norm(rk) > eps
-        inds = inds[flag]
-        dx[:, inds] = xk[:, flag]
-        xk, rk, uk, pk = xk[:, flag], rk[:, flag], uk[:, flag], pk[:, flag]
-        ZS, invM = ZS[:, flag], invM[:, flag]
+        error = inf_norm(rk)
+        flag = error < dx_rk
+        dx[:, flag] = xk[:, flag]
+        dx_rk[flag] = error[flag]
+        rk = b - (GTZSG(xk, ZS, rbe) + Q @ xk)
+        uk = invM * rk
+        #dx_rk[inds] = torch.minimum(error, dx_rk[inds])
+        #print(dx_rk)
+
+        # flag = error > eps
+        # inds = inds[flag]
+        # xk, rk, uk, pk = xk[:, flag], rk[:, flag], uk[:, flag], pk[:, flag]
+        # ZS, invM = ZS[:, flag], invM[:, flag]
+        # if inds.shape[0] == 0:
+        #     break
 
     torch.cuda.synchronize()
     pcg_time = (perf_counter() - timer)
@@ -180,10 +191,9 @@ def ipm_solve_rhs(Q, G, GT, s, z, invM, v1, v2, v3, dx = None, eps = 1E-5, n_ite
     # torch.cuda.synchronize()
     # print("Q:\t", (perf_counter() - timer)/pcg_time)
 
-    #Axb = (GT @ ((z / s) * (G @ dx)) + Q @ dx - b)
-    #print('solve in \t', k, "/", Q.shape[0], " steps, \t res = ", torch.max(inf_norm(Axb), 0).values)
+    # Axb = (GT @ ((z / s) * (G @ dx)) + Q @ dx - b)
+    # print("res = ", torch.max(inf_norm(Axb), 0).values)
 
-    dx = dx
     ds = v3 - G @ dx
     dz = (v2 - z * ds) / s
     return dx, ds, dz
@@ -241,8 +251,17 @@ def simulate_ipm(batch_part_states: list[dict],
     inds = torch.arange(s.shape[1], dtype=torch.long, device=device)
 
     it = 0
+
+    # check velocity
+    g = torch.tensor(rbe.g, dtype=floatType, device=device)
+    JnT = from_scipy_to_torch_sparse(rbe.Jn.transpose(), floatType=floatType)
+    JtT = from_scipy_to_torch_sparse(rbe.Jt.transpose(), floatType=floatType)
+    invMass = from_scipy_to_torch_sparse(rbe.invM, floatType=floatType)
+    ps = torch.tensor(ps, dtype=floatType, device=device)
+
     while it < ipm.ipm_iter:
 
+        print("step ", it)
         torch.cuda.synchronize()
         timer = perf_counter()
         invM = precond(diagQ, GG, s, z)
@@ -255,6 +274,7 @@ def simulate_ipm(batch_part_states: list[dict],
         torch.cuda.synchronize()
         print("ipm_kkt_res", perf_counter() - timer)
         #print("kkt_res", torch.max(kkt_res, 0).values)
+        #print("kkt_res", kkt_res)
 
         # remove converged
         flag = kkt_res > ipm.conv_eps
@@ -268,7 +288,7 @@ def simulate_ipm(batch_part_states: list[dict],
         # update
         torch.cuda.synchronize()
         timer = perf_counter()
-        dx_a, ds_a, dz_a = ipm_solve_rhs(Q, G, GT, s, z, invM, -r1, -r2, -r3, eps = ipm.pcg_eps, n_iter = ipm.pcg_iter, rbe = rbe)
+        dx_a, ds_a, dz_a = ipm_solve_rhs(Q, G, GT, s, z, invM, -r1, -r2, -r3, n_iter = ipm.pcg_iter_1, rbe = rbe)
         torch.cuda.synchronize()
         print("ipm_solve_rhs_1", perf_counter() - timer)
 
@@ -282,17 +302,22 @@ def simulate_ipm(batch_part_states: list[dict],
         torch.cuda.synchronize()
         timer = perf_counter()
         # option 1
-        r2 -= (sigma * mu - (ds_a * dz_a))
-        dx, ds, dz = ipm_solve_rhs(Q, G, GT, s, z, invM, -r1, -r2, -r3, eps = ipm.pcg_eps, n_iter = ipm.pcg_iter, dx = dx_a, rbe = rbe)
+        # r2 -= (sigma * mu - (ds_a * dz_a))
+        # dx, ds, dz = ipm_solve_rhs(Q, G, GT, s, z, invM, -r1, -r2, -r3, eps = ipm.pcg_eps, n_iter = pcg_iter, dx = dx_a, rbe = rbe)
 
         # option 2
-        # r2 = (sigma * mu - (ds_a * dz_a))
-        # dx, ds, dz = ipm_solve_rhs(Q, G, GT, s, z, invM, 0, r2, 0, eps=ipm.pcg_eps, n_iter=ipm.pcg_iter)
-        # dx, ds, dz = dx + dx_a, ds + ds_a, dz + dz_a
+        r2 = (sigma * mu - (ds_a * dz_a))
+        dx, ds, dz = ipm_solve_rhs(Q, G, GT, s, z, invM, 0, r2, 0, n_iter= ipm.pcg_iter_2, rbe = rbe)
+        dx, ds, dz = dx + dx_a, ds + ds_a, dz + dz_a
 
-        alpha = 0.99 * linesearch(s, ds, z, dz)
         torch.cuda.synchronize()
         print("ipm_solve_rhs_2", perf_counter() - timer)
+
+        torch.cuda.synchronize()
+        timer = perf_counter()
+        alpha = 0.99 * linesearch(s, ds, z, dz)
+        torch.cuda.synchronize()
+        print("linesearch", perf_counter() - timer)
         print("\n")
 
         x = x + alpha * dx
@@ -301,12 +326,6 @@ def simulate_ipm(batch_part_states: list[dict],
         result_x[:, inds] = x
         it = it + 1
 
-    # check velocity
-    g = torch.tensor(rbe.g, dtype=floatType, device=device)
-    JnT = from_scipy_to_torch_sparse(rbe.Jn.transpose(), floatType=floatType)
-    JtT = from_scipy_to_torch_sparse(rbe.Jt.transpose(), floatType=floatType)
-    invMass = from_scipy_to_torch_sparse(rbe.invM, floatType=floatType)
-    ps = torch.tensor(ps, dtype=floatType, device=device)
     xclip = torch.clip(result_x, xl, xu)
     λn, λt = xclip[:rbe.nλn, :], xclip[rbe.nλn: rbe.nλn + rbe.nλt, :]
     residual = (JnT @ λn + JtT @ λt + g[:, None]) * ps
@@ -526,24 +545,33 @@ if __name__ == '__main__':
     # init_polyscope()
 
     # test
+    #default_settings['rbe']['density'] = 1E3
     default_settings['rbe']['mu'] = 0.5
     default_settings["assembly"]["contact_shrink_ratio"] = 0.0 # for robustnessly computing the contact surfaces
 
-    n_batch = 8
+    n_batch = 2048
     torch.manual_seed(0)
-    parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + "/dome")
+    name = "dome"
+    parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + f"/{name}")
 
-    # filename = os.path.join(RESOURCE_DIR, "curriculum/tetris-1.pt")
-    # part_states = torch.load(filename)['input']
-    # part_states = part_states[torch.randperm(part_states.shape[0]), :]
-    # part_states = part_states[:n_batch, :]
-    part_states = np.ones((n_batch, len(parts)))
-    part_states[:, -1] = 2
 
-    default_settings['rbe']['Ccp'] = 100
+    filename = os.path.join(RESOURCE_DIR, f"curriculum/{name}.pt")
+    part_states = torch.load(filename)['input']
+    part_states = part_states[torch.randperm(part_states.shape[0]), :]
+    part_states = part_states[:n_batch, :]
+
+    # part_states = np.ones((n_batch, len(parts)))
+    # part_states[:, -1] = 2
+
+    default_settings['rbe']['Ccp'] = 1E2
     default_settings.pop('admm', None)
-    default_settings['gurobi'] = {}
-    #default_settings['ipm'] = {}
+    #default_settings['gurobi'] = {}
+    default_settings['ipm'] = {
+        'float_type': torch.float64,
+        "ipm_iter": 30,
+        "pcg_iter_1": 200,
+        "pcg_iter_2": 100,
+    }
     contacts = compute_assembly_contacts(parts, default_settings)
 
     torch.cuda.synchronize()
