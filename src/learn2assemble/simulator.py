@@ -63,7 +63,7 @@ def init_ipm(parts: list[Trimesh],
     H_tch = torch.tensor(H.todense(), dtype=torch.float64, device=device)
     cholesky_H = torch.linalg.cholesky(H_tch)
     ipm['invH'] = torch.cholesky_inverse(cholesky_H).type(float_type)
-
+    ipm['pre-computed'] = True
     settings['ipm'] = ipm
 
 def ipm_start_solve(invH, G, GT, h, q, floatType):
@@ -129,11 +129,11 @@ def ipm_solve_rhs(Q, G, GT, s, z, invM, v1, v2, v3, dx = None, n_iter = 50, rbe 
     uk = invM * rk
     pk = uk.clone()
 
-    eval_it = 50
+    eval_it = 10
     n_iter = n_iter // eval_it
 
-    torch.cuda.synchronize()
-    timer = perf_counter()
+    #torch.cuda.synchronize()
+    #timer = perf_counter()
     for k in range(n_iter):
         for t in range(eval_it):
             #Apk = GT @ (ZS * (G @ pk)) + Q @ pk
@@ -153,6 +153,7 @@ def ipm_solve_rhs(Q, G, GT, s, z, invM, v1, v2, v3, dx = None, n_iter = 50, rbe 
         dx_rk[flag] = error[flag]
         rk = b - (GTZSG(xk, ZS, rbe) + Q @ xk)
         uk = invM * rk
+
         #dx_rk[inds] = torch.minimum(error, dx_rk[inds])
         #print(dx_rk)
 
@@ -163,9 +164,9 @@ def ipm_solve_rhs(Q, G, GT, s, z, invM, v1, v2, v3, dx = None, n_iter = 50, rbe 
         # if inds.shape[0] == 0:
         #     break
 
-    torch.cuda.synchronize()
-    pcg_time = (perf_counter() - timer)
-    print("pcg:\t", (perf_counter() - timer))
+    #torch.cuda.synchronize()
+    # pcg_time = (perf_counter() - timer)
+    #print("pcg:\t", (perf_counter() - timer))
 
     # torch.cuda.synchronize()
     # timer = perf_counter()
@@ -219,6 +220,7 @@ def centering_params(s, z, ds_a, dz_a):
 
 def simulate_ipm(batch_part_states: list[dict],
                   settings: dict):
+
     # name space
     rbe = SimpleNamespace(**settings["rbe"])
     ipm = SimpleNamespace(**settings["ipm"])
@@ -245,8 +247,8 @@ def simulate_ipm(batch_part_states: list[dict],
     Q = ipm.Q
     diagQ = ipm.diagQ
 
+    # start solve
     x, s, z = ipm_start_solve(invH, G, GT, h, q, floatType)
-
     result_x = torch.zeros_like(x)
     inds = torch.arange(s.shape[1], dtype=torch.long, device=device)
 
@@ -258,6 +260,11 @@ def simulate_ipm(batch_part_states: list[dict],
     JtT = from_scipy_to_torch_sparse(rbe.Jt.transpose(), floatType=floatType)
     invMass = from_scipy_to_torch_sparse(rbe.invM, floatType=floatType)
     ps = torch.tensor(ps, dtype=floatType, device=device)
+
+
+    # ipm
+    torch.cuda.synchronize()
+    timer_start = perf_counter()
 
     while it < ipm.ipm_iter:
 
@@ -318,7 +325,7 @@ def simulate_ipm(batch_part_states: list[dict],
         alpha = 0.99 * linesearch(s, ds, z, dz)
         torch.cuda.synchronize()
         print("linesearch", perf_counter() - timer)
-        print("\n")
+
 
         x = x + alpha * dx
         s = s + alpha * ds
@@ -332,6 +339,7 @@ def simulate_ipm(batch_part_states: list[dict],
     velocity = invMass @ residual
     velocity_inf_nrm = torch.max(torch.abs(velocity), axis=0).values
     print("velocity", velocity_inf_nrm)
+    print("avg time", (perf_counter() - timer_start)/part_states.shape[0])
 
     return velocity.cpu().numpy(), (velocity_inf_nrm < rbe.velocity_tol).cpu().numpy()
 
@@ -549,16 +557,18 @@ if __name__ == '__main__':
     default_settings['rbe']['mu'] = 0.5
     default_settings["assembly"]["contact_shrink_ratio"] = 0.0 # for robustnessly computing the contact surfaces
 
-    n_batch = 2048
+    n_batch = 512
     torch.manual_seed(0)
     name = "dome"
     parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + f"/{name}")
-
 
     filename = os.path.join(RESOURCE_DIR, f"curriculum/{name}.pt")
     part_states = torch.load(filename)['input']
     part_states = part_states[torch.randperm(part_states.shape[0]), :]
     part_states = part_states[:n_batch, :]
+    #dataset = {'input': part_states}
+    # torch.save(dataset, os.path.join(RESOURCE_DIR, f"curriculum/{name}.pt"))
+    # exit(0)
 
     # part_states = np.ones((n_batch, len(parts)))
     # part_states[:, -1] = 2
@@ -567,18 +577,16 @@ if __name__ == '__main__':
     default_settings.pop('admm', None)
     #default_settings['gurobi'] = {}
     default_settings['ipm'] = {
-        'float_type': torch.float64,
-        "ipm_iter": 30,
+        'float_type': torch.float32,
+        "ipm_iter": 25,
         "pcg_iter_1": 200,
         "pcg_iter_2": 100,
     }
     contacts = compute_assembly_contacts(parts, default_settings)
+    init_rbe(parts, contacts, default_settings)
+    init_ipm(parts, contacts, default_settings)
 
-    torch.cuda.synchronize()
-    timer = perf_counter()
     v_fp32, stable_fp32 = simulate(parts, contacts, part_states, default_settings)
-    torch.cuda.synchronize()
-    print("avg time:\t", (perf_counter() - timer) / n_batch)
     print(np.sum(stable_fp32) / n_batch)
 
     # t = 0
