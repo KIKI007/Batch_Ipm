@@ -565,7 +565,7 @@ if __name__ == '__main__':
     default_settings['rbe']['Ccp'] = 500
     default_settings["assembly"]["contact_shrink_ratio"] = 0 # for robustnessly computing the contact surfaces
 
-    n_batch = 512
+    n_batch = 2048
     torch.manual_seed(0)
     name = "dome"
     parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + f"/{name}")
@@ -588,7 +588,7 @@ if __name__ == '__main__':
     default_settings.pop('admm', None)
     #default_settings['gurobi'] = {}
     default_settings['ipm'] = {
-        'float_type': torch.float64,
+        'float_type': torch.float32,
         "ipm_iter": 30,
         "conv_eps": 1E-5,
         "pcg_iter_1": 200,
