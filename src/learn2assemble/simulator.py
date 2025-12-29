@@ -589,7 +589,7 @@ if __name__ == '__main__':
     default_settings.pop('admm', None)
     #default_settings['gurobi'] = {}
     default_settings['ipm'] = {
-        'float_type': torch.float32,
+        'float_type': torch.float64,
         "ipm_iter": 30,
         "conv_eps": 1E-5,
         "pcg_iter_1": 200,
