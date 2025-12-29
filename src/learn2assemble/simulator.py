@@ -557,7 +557,7 @@ if __name__ == '__main__':
     default_settings['rbe']['mu'] = 0.5
     default_settings["assembly"]["contact_shrink_ratio"] = 0.0 # for robustnessly computing the contact surfaces
 
-    n_batch = 512
+    n_batch = 1024
     torch.manual_seed(0)
     name = "dome"
     parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + f"/{name}")
