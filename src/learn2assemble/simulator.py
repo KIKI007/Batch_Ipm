@@ -580,7 +580,7 @@ if __name__ == '__main__':
         'float_type': torch.float64,
         "ipm_iter": 30,
         "pcg_iter_1": 200,
-        "pcg_iter_2": 100,
+        "pcg_iter_2": 200,
     }
     contacts = compute_assembly_contacts(parts, default_settings)
     init_rbe(parts, contacts, default_settings)
