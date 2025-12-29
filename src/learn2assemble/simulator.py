@@ -591,7 +591,7 @@ if __name__ == '__main__':
         'float_type': torch.float32,
         "ipm_iter": 30,
         "conv_eps": 1E-5,
-        "pcg_iter_1": 400,
+        "pcg_iter_1": 200,
         "pcg_iter_2": 50,
         "pcg_eval_it": 10,
     }
