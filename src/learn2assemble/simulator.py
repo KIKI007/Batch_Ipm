@@ -10,6 +10,7 @@ from gurobipy import GRB
 from learn2assemble.rbe import *
 from types import SimpleNamespace
 
+torch.backends.cuda.matmul.allow_tf32 = True
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 def from_scipy_to_torch_sparse(A: sp.sparse.coo_matrix,
                                floatType=torch.float32):
