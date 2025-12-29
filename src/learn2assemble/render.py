@@ -120,6 +120,7 @@ def render_batch_simulation(parts: list[Trimesh], boundary_part_ids: list = [], 
 def draw_assembly_motion(parts: list[Trimesh], part_states: np.ndarray, q: np.ndarray):
     for part_id, part_mesh in enumerate(parts):
         enabled = True
+        color = [0.0, 0.0, 0.0]
         if part_states[part_id] == 1:
             color = [1.0, 1.0, 1.0]
         elif part_states[part_id] == 2:

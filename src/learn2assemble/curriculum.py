@@ -286,13 +286,16 @@ if __name__ == '__main__':
 
     parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + "/dome")
     default_settings['curriculum']['verbose'] = True
-    default_settings['rbe']['mu'] = 0.5
     default_settings["assembly"]["contact_shrink_ratio"] = 0.0 # for robustnessly computing the contact surfaces
-    default_settings['curriculum']['n_beam'] = 128
+    default_settings['curriculum']['n_beam'] = 64
     default_settings.pop('admm')
     default_settings['gurobi'] = {}
-    default_settings["env"]["boundary_part_ids"] = [len(parts) - 1]
 
+    default_settings['rbe']['density'] = 1
+    default_settings['rbe']['Ccp'] = 5
+    default_settings['rbe']['mu'] = 0.5
+    default_settings['rbe']['velocity_tol'] = 1E-6
+    default_settings['env']['boundary_part_ids'] = [len(parts) - 1]
     # debug
     #parts.remove(parts[3]) # for tetris-7
 
@@ -303,7 +306,7 @@ if __name__ == '__main__':
     succeed, solution, curriculum, policy_dataset = forward_curriculum(parts, contacts, None, None, default_settings)
     print("succeed:\t", succeed)
 
-    filename = os.path.join(RESOURCE_DIR, "curriculum/dome_back.pol")
+    filename = os.path.join(RESOURCE_DIR, "curriculum/dome_back2.pol")
 
     input = np.vstack(policy_dataset['input'])
     policy_dataset['input'] = torch.tensor(input, dtype=torch.int32, device="cpu")

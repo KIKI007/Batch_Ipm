@@ -229,11 +229,8 @@ if __name__ == '__main__':
     default_settings["assembly"]["contact_shrink_ratio"] = 0.1 # for robustnessly computing the contact surfaces
 
     init_polyscope()
-    parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + "/tetris-1")
-    part_states = np.zeros(len(parts))
-    part_states[3] = 1
-    part_states[5] = 1
-    part_states[0] = 2
+    parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + "/dome")
+    part_states = np.ones(len(parts))
     contacts = compute_assembly_contacts(parts, default_settings)
     draw_contacts(contacts, part_states, enable=True)
     draw_assembly(parts, part_states)

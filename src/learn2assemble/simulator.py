@@ -42,7 +42,6 @@ def init_ipm(parts: list[Trimesh],
     Inx = sp.sparse.coo_matrix(sp.sparse.eye_array(nx, dtype=np.float64))
 
     G = sp.sparse.block_array([[-A],
-                               [A],
                                [-Inx],
                                [Inx]])
     GT = G.transpose()
@@ -66,9 +65,9 @@ def init_ipm(parts: list[Trimesh],
     ipm['pre-computed'] = True
     settings['ipm'] = ipm
 
-def ipm_start_solve(invH, G, GT, h, q, floatType):
-    x = invH @ (GT @ h - q)
-    oldz = G @ x - h
+def ipm_start_solve(invH, rbe, h, q, floatType):
+    x = invH @ (GT_(h, rbe) - q)
+    oldz = G_(x, rbe) - h
     alpha_p = torch.max(oldz, 0).values
     flag = (alpha_p < 0).type(floatType).repeat(oldz.shape[0], 1)
     s = flag * (-oldz) + (1 - flag) * (-oldz + (1 + alpha_p))
@@ -78,10 +77,43 @@ def ipm_start_solve(invH, G, GT, h, q, floatType):
     z = flag * (oldz) +  (1 - flag) * (oldz + 1 + alpha_d)
     return x, s, z
 
-def ipm_kkt_res(Q, q, h, G, GT, x, s, z):
-    r1 = Q @ x + q + GT @ z
+def GTZSG(p, ZS, rbe):
+    λn, λt = p[:rbe.nλn, :], p[rbe.nλn: rbe.nλn + rbe.nλt, :]
+    inds = torch.arange(rbe.nλn, device=p.device, dtype=torch.long)
+    inds = inds.repeat(rbe.nt)
+    λn = rbe.mu * λn
+    λn.index_add_(0, inds, λt, alpha=-1.0)
+    p = ZS * torch.vstack([-λn, -p, p])
+
+    nx = rbe.nλn + rbe.nλt + rbe.nf
+    λ0 = torch.zeros((nx, p.shape[1]), device=p.device, dtype=p.dtype)
+    λ0[:rbe.nλn, :] = rbe.mu * (- p[:rbe.nλn])
+    λ0[rbe.nλn : rbe.nλn + rbe.nλt, :] = p[:rbe.nλn].repeat((rbe.nt, 1))
+    λ2 = p[rbe.nλn: rbe.nλn + nx]
+    λ3 = p[rbe.nλn + nx:]
+    return λ3 - λ2 + λ0
+
+def GT_(p, rbe):
+    nx = rbe.nλn + rbe.nλt + rbe.nf
+    λ0 = torch.zeros((nx, p.shape[1]), device=p.device, dtype=p.dtype)
+    λ0[:rbe.nλn, :] = rbe.mu * (- p[:rbe.nλn])
+    λ0[rbe.nλn: rbe.nλn + rbe.nλt, :] = p[:rbe.nλn].repeat((rbe.nt, 1))
+    λ2 = p[rbe.nλn: rbe.nλn + nx]
+    λ3 = p[rbe.nλn + nx:]
+    return λ3 - λ2 + λ0
+
+def G_(p, rbe):
+    λn, λt = p[:rbe.nλn, :], p[rbe.nλn: rbe.nλn + rbe.nλt, :]
+    inds = torch.arange(rbe.nλn, device=p.device, dtype=torch.long)
+    inds = inds.repeat(rbe.nt)
+    λn = rbe.mu * λn
+    λn.index_add_(0, inds, λt, alpha=-1.0)
+    return torch.vstack([-λn, -p, p])
+
+def ipm_kkt_res(Q, q, h, rbe, x, s, z):
+    r1 = Q @ x + q + GT_(z, rbe)
     r2 = s * z
-    r3 = G @ x + s - h
+    r3 = G_(x, rbe) + s - h
     kkt_res = torch.vstack([r1, r2, r3])
     kkt_res = torch.abs(kkt_res)
     kkt_res = torch.max(kkt_res, 0).values
@@ -97,24 +129,11 @@ def precond(diagQ, GG, s, z):
 def inf_norm(x):
     return torch.max(torch.abs(x), dim=0).values
 
-def GTZSG(p, ZS, rbe):
-    λn, λt = p[:rbe.nλn, :], p[rbe.nλn: rbe.nλn + rbe.nλt, :]
-    inds = torch.arange(rbe.nλn, device=p.device, dtype=torch.long)
-    inds = inds.repeat(rbe.nt)
-    λn = rbe.mu * λn
-    λn.index_add_(0, inds, λt, alpha=-1.0)
-    p = ZS * torch.vstack([-λn, λn, -p, p])
-    nx = rbe.nλn + rbe.nλt + rbe.nf
-    λ0 = torch.zeros((nx, p.shape[1]), device=p.device, dtype=p.dtype)
-    λ0[:rbe.nλn, :] = rbe.mu * (p[rbe.nλn: 2 * rbe.nλn] - p[:rbe.nλn])
-    λ0[rbe.nλn : rbe.nλn + rbe.nλt, :] = p[:rbe.nλn].repeat((rbe.nt, 1)) - p[rbe.nλn: 2 * rbe.nλn].repeat((rbe.nt, 1))
-    λ2 = p[rbe.nλn * 2: 2 * rbe.nλn + nx]
-    λ3 = p[rbe.nλn * 2 + nx:]
-    return λ3 - λ2 + λ0
+def ipm_solve_rhs(Q, s, z, invM, v1, v2, v3, dx = None, n_iter = 50, eval_it = 10, rbe = None):
 
-def ipm_solve_rhs(Q, G, GT, s, z, invM, v1, v2, v3, dx = None, n_iter = 50, rbe = None):
     ZS = z / s
-    b = GT @ ((z * v3 - v2) / s) + v1
+    b = GT_((z * v3 - v2) / s, rbe) + v1
+
     if dx is None:
         dx = torch.zeros_like(b)
         xk = torch.zeros_like(b)
@@ -129,7 +148,6 @@ def ipm_solve_rhs(Q, G, GT, s, z, invM, v1, v2, v3, dx = None, n_iter = 50, rbe 
     uk = invM * rk
     pk = uk.clone()
 
-    eval_it = 10
     n_iter = n_iter // eval_it
 
     #torch.cuda.synchronize()
@@ -168,35 +186,9 @@ def ipm_solve_rhs(Q, G, GT, s, z, invM, v1, v2, v3, dx = None, n_iter = 50, rbe 
     # pcg_time = (perf_counter() - timer)
     #print("pcg:\t", (perf_counter() - timer))
 
-    # torch.cuda.synchronize()
-    # timer = perf_counter()
-    # for it in range(n_iter * eval_it):
-    #     Apk = GT @ (ZS * (G @ pk))
-    #     pk = pk + 0.1
-    # torch.cuda.synchronize()
-    # print("G1:\t", (perf_counter() - timer))
-
-    # torch.cuda.synchronize()
-    # timer = perf_counter()
-    # for it in range(n_iter * eval_it):
-    #     Apk = GTZSG(pk, ZS, rbe)
-    #     pk = pk + 0.1
-    # torch.cuda.synchronize()
-    # print("G2:\t", (perf_counter() - timer)/pcg_time)
-    #
-    # torch.cuda.synchronize()
-    # timer = perf_counter()
-    # for it in range(n_iter * eval_it):
-    #     Apk = Q @ pk
-    #     pk = pk + 0.1
-    # torch.cuda.synchronize()
-    # print("Q:\t", (perf_counter() - timer)/pcg_time)
-
-    # Axb = (GT @ ((z / s) * (G @ dx)) + Q @ dx - b)
-    # print("res = ", torch.max(inf_norm(Axb), 0).values)
-
-    ds = v3 - G @ dx
+    ds = v3 - G_(dx, rbe)
     dz = (v2 - z * ds) / s
+
     return dx, ds, dz
 
 def linesearch(s, ds, z, dz, nsample = 32):
@@ -237,18 +229,16 @@ def simulate_ipm(batch_part_states: list[dict],
     xu = torch.tensor(xu, dtype=floatType, device=device)
     Al = torch.tensor(Al, dtype=floatType, device=device)
     Au = torch.tensor(Au, dtype=floatType, device=device)
-    h = torch.vstack([-Al, Au, -xl, xu])
+    h = torch.vstack([-Al, -xl, xu])
 
     # initialize ipm
     invH = ipm.invH
-    G = ipm.G
-    GT = ipm.GT
     GG = ipm.GG
     Q = ipm.Q
     diagQ = ipm.diagQ
 
     # start solve
-    x, s, z = ipm_start_solve(invH, G, GT, h, q, floatType)
+    x, s, z = ipm_start_solve(invH, rbe, h, q, floatType)
     result_x = torch.zeros_like(x)
     inds = torch.arange(s.shape[1], dtype=torch.long, device=device)
 
@@ -268,18 +258,18 @@ def simulate_ipm(batch_part_states: list[dict],
 
     while it < ipm.ipm_iter:
 
-        print("step ", it)
-        torch.cuda.synchronize()
-        timer = perf_counter()
+        #print("step ", it)
+        #torch.cuda.synchronize()
+        #timer = perf_counter()
         invM = precond(diagQ, GG, s, z)
-        torch.cuda.synchronize()
-        print("precond", perf_counter() - timer)
+        #torch.cuda.synchronize()
+        #print("precond", perf_counter() - timer)
 
-        torch.cuda.synchronize()
-        timer = perf_counter()
-        r1, r2, r3, kkt_res = ipm_kkt_res(Q, q, h, G, GT, x, s, z)
-        torch.cuda.synchronize()
-        print("ipm_kkt_res", perf_counter() - timer)
+        #torch.cuda.synchronize()
+        #timer = perf_counter()
+        r1, r2, r3, kkt_res = ipm_kkt_res(Q, q, h, rbe, x, s, z)
+        #torch.cuda.synchronize()
+        #print("ipm_kkt_res", perf_counter() - timer)
         #print("kkt_res", torch.max(kkt_res, 0).values)
         #print("kkt_res", kkt_res)
 
@@ -293,38 +283,38 @@ def simulate_ipm(batch_part_states: list[dict],
             break
 
         # update
-        torch.cuda.synchronize()
-        timer = perf_counter()
-        dx_a, ds_a, dz_a = ipm_solve_rhs(Q, G, GT, s, z, invM, -r1, -r2, -r3, n_iter = ipm.pcg_iter_1, rbe = rbe)
-        torch.cuda.synchronize()
-        print("ipm_solve_rhs_1", perf_counter() - timer)
+        #torch.cuda.synchronize()
+        #timer = perf_counter()
+        dx_a, ds_a, dz_a = ipm_solve_rhs(Q, s, z, invM, -r1, -r2, -r3, n_iter = ipm.pcg_iter_1, eval_it=ipm.pcg_eval_it, rbe = rbe)
+        #torch.cuda.synchronize()
+        #print("ipm_solve_rhs_1", perf_counter() - timer)
 
-        torch.cuda.synchronize()
-        timer = perf_counter()
+        #torch.cuda.synchronize()
+        #timer = perf_counter()
         sigma, mu = centering_params(s, z, ds_a, dz_a)
 
-        torch.cuda.synchronize()
-        print("centering_params", perf_counter() - timer)
+        #torch.cuda.synchronize()
+        #print("centering_params", perf_counter() - timer)
 
-        torch.cuda.synchronize()
-        timer = perf_counter()
+        #torch.cuda.synchronize()
+        #timer = perf_counter()
         # option 1
         # r2 -= (sigma * mu - (ds_a * dz_a))
-        # dx, ds, dz = ipm_solve_rhs(Q, G, GT, s, z, invM, -r1, -r2, -r3, eps = ipm.pcg_eps, n_iter = pcg_iter, dx = dx_a, rbe = rbe)
+        # dx, ds, dz = ipm_solve_rhs(Q, s, z, invM, -r1, -r2, -r3, eps = ipm.pcg_eps, n_iter = pcg_iter, dx = dx_a, rbe = rbe)
 
         # option 2
         r2 = (sigma * mu - (ds_a * dz_a))
-        dx, ds, dz = ipm_solve_rhs(Q, G, GT, s, z, invM, 0, r2, 0, n_iter= ipm.pcg_iter_2, rbe = rbe)
+        dx, ds, dz = ipm_solve_rhs(Q, s, z, invM, 0, r2, 0, n_iter= ipm.pcg_iter_2, eval_it=ipm.pcg_eval_it, rbe = rbe)
         dx, ds, dz = dx + dx_a, ds + ds_a, dz + dz_a
 
-        torch.cuda.synchronize()
-        print("ipm_solve_rhs_2", perf_counter() - timer)
+        #torch.cuda.synchronize()
+        #print("ipm_solve_rhs_2", perf_counter() - timer)
 
-        torch.cuda.synchronize()
-        timer = perf_counter()
+        #torch.cuda.synchronize()
+        #timer = perf_counter()
         alpha = 0.99 * linesearch(s, ds, z, dz)
-        torch.cuda.synchronize()
-        print("linesearch", perf_counter() - timer)
+        #torch.cuda.synchronize()
+        #print("linesearch", perf_counter() - timer)
 
 
         x = x + alpha * dx
@@ -432,6 +422,8 @@ def simulate_admm(batch_part_states: list[dict],
 
     v = torch.zeros(rbe.nf, n_batch, device=device, dtype=floatType)
 
+    torch.cuda.synchronize()
+    timer_start = perf_counter()
     # admm iterations
     for iter in np.arange(stop=admm.max_iter, step=admm.evaluate_iter):
 
@@ -460,6 +452,8 @@ def simulate_admm(batch_part_states: list[dict],
         if batch_inds.shape[0] == 0:
             break
 
+    print("avg time", (perf_counter() - timer_start) / part_states.shape[0])
+
     return v.cpu().numpy(), stable_flags.cpu().numpy()
 
 def init_gurobi(parts, contacts, settings: dict):
@@ -485,6 +479,8 @@ def simulate_gurobi(batch_part_states: list[dict],
     flags, vs = [], []
     nx, nA = q.shape[0], Al.shape[0]
 
+    torch.cuda.synchronize()
+    timer_start = perf_counter()
     for id in range(batch_part_states.shape[0]):
         xli, xui, Ali, Aui, qi = xl[:, id], xu[:, id], Al[:, id], Au[:, id], q[:, id]
         m = gp.Model(env=env)
@@ -503,6 +499,7 @@ def simulate_gurobi(batch_part_states: list[dict],
             residual = (rbe.Jn.T @ λn + rbe.Jt.T @ λt + rbe.g) * ps[:, id]
             velocity = rbe.invM @ residual
             velocity_inf_nrm = np.max(np.abs(velocity), axis=0)
+            # print(velocity_inf_nrm)
             if velocity_inf_nrm < rbe.velocity_tol:
                 flags.append(True)
             else:
@@ -513,6 +510,8 @@ def simulate_gurobi(batch_part_states: list[dict],
             vs.append(np.zeros(rbe.nf))
     vs = np.vstack(vs)
     vs = vs.T
+    print("avg time:\t", (perf_counter() - timer_start) / batch_part_states.shape[0])
+
     return vs, np.array(flags)
 
 def simulate(parts: list[Trimesh],
@@ -547,17 +546,18 @@ if __name__ == '__main__':
     from learn2assemble import ASSEMBLY_RESOURCE_DIR, default_settings, RESOURCE_DIR
     from learn2assemble.render import *
     from learn2assemble.assembly import load_assembly_from_files, compute_assembly_contacts
-    # import polyscope as ps
+    import polyscope as ps
     import os
-    #
-    # init_polyscope()
+
+    init_polyscope()
 
     # test
-    #default_settings['rbe']['density'] = 1E3
+    default_settings['rbe']['density'] = 1000
     default_settings['rbe']['mu'] = 0.5
-    default_settings["assembly"]["contact_shrink_ratio"] = 0.0 # for robustnessly computing the contact surfaces
+    default_settings['rbe']['Ccp'] = 500
+    default_settings["assembly"]["contact_shrink_ratio"] = 0 # for robustnessly computing the contact surfaces
 
-    n_batch = 1024
+    n_batch = 512
     torch.manual_seed(0)
     name = "dome"
     parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + f"/{name}")
@@ -573,31 +573,31 @@ if __name__ == '__main__':
     # part_states = np.ones((n_batch, len(parts)))
     # part_states[:, -1] = 2
 
-    default_settings['rbe']['Ccp'] = 1E2
     default_settings.pop('admm', None)
     #default_settings['gurobi'] = {}
     default_settings['ipm'] = {
-        'float_type': torch.float64,
+        'float_type': torch.float32,
         "ipm_iter": 30,
-        "pcg_iter_1": 400,
-        "pcg_iter_2": 100,
+        "pcg_iter_1": 100,
+        "pcg_iter_2": 50,
+        "pcg_eval_it": 10,
     }
     contacts = compute_assembly_contacts(parts, default_settings)
     init_rbe(parts, contacts, default_settings)
     init_ipm(parts, contacts, default_settings)
 
     v_fp32, stable_fp32 = simulate(parts, contacts, part_states, default_settings)
+    #print(stable_fp32)
     print(np.sum(stable_fp32) / n_batch)
 
-    # t = 0
-    # def callback():
-    #     global t
-    #     changed, t = psim.SliderFloat("time", v=t, v_min=0, v_max=1)
-    #     if changed:
-    #         draw_assembly_motion(parts, part_states[0], v_fp32[:, 0] * t)
+    t = 0
+    def callback():
+        global t
+        changed, t = psim.SliderFloat("time", v=t, v_min=0, v_max=1)
+        if changed:
+            draw_assembly_motion(parts, part_states[0], v_fp32[:, 0] * t)
 
-    #
-    # draw_contacts(contacts, part_states[0])
-    # draw_assembly_motion(parts, part_states[0], v_fp32[:, 0] * t)
-    # ps.set_user_callback(callback)
-    # ps.show()
+    draw_contacts(contacts, part_states[0])
+    draw_assembly_motion(parts, part_states[0], v_fp32[:, 0] * t)
+    ps.set_user_callback(callback)
+    ps.show()
