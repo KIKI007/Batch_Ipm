@@ -557,12 +557,12 @@ if __name__ == '__main__':
     default_settings['rbe']['Ccp'] = 500
     default_settings["assembly"]["contact_shrink_ratio"] = 0 # for robustnessly computing the contact surfaces
 
-    n_batch = 512
+    n_batch = 2048
     torch.manual_seed(0)
     name = "dome"
     parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + f"/{name}")
 
-    filename = os.path.join(RESOURCE_DIR, f"curriculum/{name}.pt")
+    filename = os.path.join(RESOURCE_DIR, f"curriculum/{name}_back2.pol")
     part_states = torch.load(filename)['input']
     part_states = part_states[torch.randperm(part_states.shape[0]), :]
     part_states = part_states[:n_batch, :]
@@ -577,7 +577,7 @@ if __name__ == '__main__':
     #default_settings['gurobi'] = {}
     default_settings['ipm'] = {
         'float_type': torch.float32,
-        "ipm_iter": 30,
+        "ipm_iter": 20,
         "pcg_iter_1": 100,
         "pcg_iter_2": 50,
         "pcg_eval_it": 10,
