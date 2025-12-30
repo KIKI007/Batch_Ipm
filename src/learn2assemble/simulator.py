@@ -577,7 +577,7 @@ if __name__ == '__main__':
         "kkt_conv_eps": 1E-5,
         "x_bound_tol": 1E-6,
         "float_type": torch.float32,
-        "use_Q_fast": False,
+        "use_Q_fast": True,
     }
     contacts = compute_assembly_contacts(parts, default_settings)
     init_rbe(parts, contacts, default_settings)
