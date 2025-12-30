@@ -186,7 +186,7 @@ def train(parts: list[Trimesh],
 
     # forward curriculum
     if settings['curriculum']['n_beam'] > 0:
-        _, _, curriculum = forward_curriculum(parts, contacts, table_insertion=env.table_insertion, table_grasp=env.table_grasp, settings=settings)
+        _, _, curriculum, _ = forward_curriculum(parts, contacts, table_insertion=env.table_insertion, table_grasp=env.table_grasp, settings=settings)
         env.set_curriculum(curriculum)
     ppo_agent.buffer.reset_curriculum(env.curriculum.shape[0])
 
