@@ -104,10 +104,15 @@ def end_timer(name):
         if name in logger['timer']:
             logger['log'][name] += perf_counter() - logger['timer'][name]
 
-def print_logger(nbatch = 1.0):
+def print_logger(nbatch = 1.0, names = []):
     if logger['activate']:
-        for name, value in logger['log'].items():
-            print(name, f":\t\t\t {value / nbatch:.3e}")
+        if len(names) == 0:
+            for name, value in logger['log'].items():
+                print(name, f":\t\t\t {value / nbatch:.3e}")
+        else:
+            for name in names:
+                if name in logger['log']:
+                    print(name, f":\t\t\t {logger['log'][name] / nbatch:.3e}")
 
 def index_mapping(batch_part_states, iAs, iBs, nλn):
     if batch_part_states.ndim == 1:
