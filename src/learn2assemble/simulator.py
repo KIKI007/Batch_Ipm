@@ -27,12 +27,65 @@ def from_scipy_to_torch_sparse(A: sp.sparse.coo_matrix,
 def inf_norm(x):
     return torch.max(torch.abs(x), dim=0).values
 
-def evaluate_result(xclip, ps, rbe):
-    λn, λt = xclip[:rbe.nλn, :], xclip[rbe.nλn: rbe.nλn + rbe.nλt, :]
-    residual = (rbe.JnT @ λn + rbe.JtT @ λt + rbe.g[:, None]) * ps
-    velocity = rbe.invMass @ residual
-    velocity_inf_nrm = inf_norm(velocity)
-    return velocity, velocity_inf_nrm
+def GT_(p, nλn, nt, nf, mu):
+    nλt = nλn * nt
+    nx = nλn + nλt + nf
+    λ0 = torch.zeros((nx, p.shape[1]), device=p.device, dtype=p.dtype)
+    λ0[:nλn, :] = mu * (- p[:nλn])
+    λ0[nλn: nλn + nλt, :] = p[:nλn].repeat((nt, 1))
+    λ2 = p[nλn: nλn + nx]
+    λ3 = p[nλn + nx:]
+    return λ3 - λ2 + λ0
+
+def G_(p, nλn, nt, nf, mu):
+    nλt = nλn * nt
+    λn, λt = p[:nλn, :], p[nλn: nλn + nλt, :]
+    inds = torch.arange(nλn, device=p.device, dtype=torch.long)
+    inds = inds.repeat(nt)
+    λn = mu * λn
+    λn.index_add_(0, inds, λt, alpha=-1.0)
+    return torch.vstack([-λn, -p, p])
+
+def GTZSG_(p, ZS, nλn, nt, nf, mu):
+    nbatch = p.shape[1]
+    nλt = nλn * nt
+    nx = nλn + nλt + nf
+
+    # step 1
+    λn, λt = p[:nλn, :], p[nλn: nλn + nλt, :]
+    inds = torch.arange(nλn, device=p.device, dtype=torch.long)
+    inds = inds.repeat(nt)
+    λn = mu * λn
+    λn.index_add_(0, inds, λt, alpha=-1.0)
+    Gp = torch.vstack([-λn, -p, p])
+
+    # step 2
+    ZSGp = ZS * Gp
+
+    # step 3
+    λ0 = torch.zeros((nx, nbatch), device=p.device, dtype=p.dtype)
+    λ0[:nλn, :] = mu * (- ZSGp[:nλn])
+    λ0[nλn: nλn + nλt, :] = ZSGp[:nλn].repeat((nt, 1))
+    λ2 = ZSGp[nλn: nλn + nx]
+    λ3 = ZSGp[nλn + nx:]
+    return λ3 - λ2 + λ0
+
+def Q_(p, nλn, nt, iA, iB, nA, nB, invM):
+    batch = p.shape[1]
+    nλt = nλn * nt
+    λ, f = p[: nλn + nλt, :], -p[nλn + nλt:, :]
+    λ = λ[:, None, :].repeat(1, 6, 1).reshape(-1, batch)
+    xA = λ * nA[:, None]
+    xB = λ * nB[:, None]
+    f.index_add_(0, iA, xA)
+    f.index_add_(0, iB, xB)
+    f = f.reshape(-1, 3, batch)
+    x = (invM @ f).reshape(-1, batch)
+    pA = torch.index_select(x, 0, iA)
+    pB = torch.index_select(x, 0, iB)
+    λ = nA[:, None] * pA + nB[:, None] * pB
+    λ = torch.sum(λ.reshape(-1, 6, batch), dim=1)
+    return torch.vstack([λ, -x])
 
 def reset_timer(name):
     if logger['activate']:
@@ -67,7 +120,6 @@ def get_dynamic_attrib(batch_part_states, rbe, float_type):
     return q, xl, xu, Al, Au, ps, cs
 
 def ipm_contacts(ipm, parts, contacts, density, boundary_part_ids):
-
     iAs = []
     iBs = []
     nAs = []
@@ -132,6 +184,7 @@ def ipm_contacts(ipm, parts, contacts, density, boundary_part_ids):
     M = np.stack(M)
     ipm['invM'] = torch.tensor(M, device=device, dtype=ipm['float_type'])
 
+
 def init_ipm(parts: list[Trimesh], contacts: list[dict], settings: dict):
     ipm = update_default_settings(settings,
                                   "ipm",
@@ -144,6 +197,7 @@ def init_ipm(parts: list[Trimesh], contacts: list[dict], settings: dict):
                                       "kkt_conv_eps": 1E-5,
                                       "x_bound_tol": 1E-6,
                                       "float_type": torch.float32,
+                                      "sparsity_Q": 0.1,
                                   })
     float_type = ipm['float_type']
     rbe = settings['rbe']
@@ -184,81 +238,45 @@ def init_ipm(parts: list[Trimesh], contacts: list[dict], settings: dict):
     ipm_contacts(ipm, parts, contacts, rbe['density'], settings['env']['boundary_part_ids'])
 
     ipm['pre-computed'] = True
+    if ipm['use_Q_fast']:
+        torch.set_float32_matmul_precision('high')
+        ipm['Q_'] = torch.compile(Q_)
+    else:
+        ipm['Q_'] = lambda x, *kwargs: ipm['Q'] @ x
+
+    ipm['GT_'] = torch.compile(GT_)
+    ipm['G_'] = torch.compile(G_)
+    ipm['GTZSG_'] = torch.compile(GTZSG_)
+    # ipm['ipm_solve_rhs'] = torch.compile(ipm_solve_rhs)
+
     settings['ipm'] = ipm
 
-#@torch.compile
-def GT_(p, nλn, nt, nf, mu):
-    nλt = nλn * nt
-    nx = nλn + nλt + nf
-    λ0 = torch.zeros((nx, p.shape[1]), device=p.device, dtype=p.dtype)
-    λ0[:nλn, :] = mu * (- p[:nλn])
-    λ0[nλn: nλn + nλt, :] = p[:nλn].repeat((nt, 1))
-    λ2 = p[nλn: nλn + nx]
-    λ3 = p[nλn + nx:]
-    return λ3 - λ2 + λ0
-
-#@torch.compile
-def G_(p, nλn, nt, nf, mu):
-    nλt = nλn * nt
-    λn, λt = p[:nλn, :], p[nλn: nλn + nλt, :]
-    inds = torch.arange(nλn, device=p.device, dtype=torch.long)
-    inds = inds.repeat(nt)
-    λn = mu * λn
-    λn.index_add_(0, inds, λt, alpha=-1.0)
-    return torch.vstack([-λn, -p, p])
-
-#@torch.compile
-def GTZSG(p, ZS, nλn, nt, nf, mu):
-    Gp = G_(p, nλn, nt, nf, mu)
-    ZSGp = ZS * Gp
-    return GT_(ZSGp, nλn, nt, nf, mu)
-
-# def Knt_(p, nλn, nt, iA, iB, nA, nB, invM):
-#     nλt = nλn * nt
-#     λ, f = p[: nλn + nλt, :], -p[nλn + nλt: , :]
-#     xA = torch.einsum('ib, ij -> ijb', λ, nA).reshape(-1, p.shape[1])
-#     xB = torch.einsum('ib, ij -> ijb', λ, nB).reshape(-1, p.shape[1])
-#     f.index_add_(0, iA, xA)
-#     f.index_add_(0, iB, xB)
-#     return f
-#
-# def Kn_(p, nλn, nt, iA, iB, nA, nB, invM):
-#     nbatch = p.shape[1]
-#     pA = torch.index_select(p, 0, iA).reshape(-1, 6, nbatch)
-#     pB = torch.index_select(p, 0, iB).reshape(-1, 6, nbatch)
-#     λ = nA[:, :, None] * pA + nB[:, :, None] * pB
-#     λ = torch.sum(λ, dim = 1)
-#     return torch.vstack([λ, -p])
-#
-# def invM_(p, nλn, nt, iA, iB, nA, nB, invM):
-#     b = p.shape[1]
-#     p_ = p.reshape(-1, 3, b)
-#     x = torch.einsum('ijk, ikb -> ijb', invM, p_).reshape(-1, b)
-#     return x
-
-@torch.compile
-def Q_(p, nλn, nt, iA, iB, nA, nB, invM):
+def sum_forces(p, nλn, nt, iA, iB, nA, nB):
     batch = p.shape[1]
     nλt = nλn * nt
-    λ, f = p[: nλn + nλt, :], -p[nλn + nλt:, :]
+    nf = p.shape[0] - nλn - nλt
+    λ = p[: nλn + nλt, :]
     λ = λ[:, None, :].repeat(1, 6, 1).reshape(-1, batch)
     xA = λ * nA[:, None]
     xB = λ * nB[:, None]
-    f.index_add_(0, iA, xA)
-    f.index_add_(0, iB, xB)
-    f = f.reshape(-1, 3, batch)
-    x = (invM @ f).reshape(-1, batch)
-    pA = torch.index_select(x, 0, iA)
-    pB = torch.index_select(x, 0, iB)
-    λ = nA[:, None] * pA + nB[:, None] * pB
-    λ = torch.sum(λ.reshape(-1, 6, batch), dim=1)
-    return torch.vstack([λ, -x])
+    sumf = torch.zeros((nf, p.shape[1]), device=p.device, dtype=p.dtype)
+    sumf.index_add_(0, iA, xA)
+    sumf.index_add_(0, iB, xB)
+    return sumf
 
-@torch.compile
+def ipm_evaluate_result(ipm, xclip, ps):
+    batch = xclip.shape[1]
+    rbeQ = ipm.nλn, ipm.nt, ipm.iAs, ipm.iBs, ipm.nAs, ipm.nBs
+    residual = (sum_forces(xclip, *rbeQ) + ipm.g[:, None]) * ps
+    residual = residual.reshape(-1, 3, batch)
+    velocity = (ipm.invM @ residual).reshape(-1, batch)
+    velocity_inf_nrm = inf_norm(velocity)
+    return velocity, velocity_inf_nrm
+
 def ipm_start_solve(ipm, h, q):
     rbe = ipm.nλn, ipm.nt, ipm.nf, ipm.mu
-    x = ipm.invH @ (GT_(h, *rbe) - q)
-    oldz = G_(x, *rbe) - h
+    x = ipm.invH @ (ipm.GT_(h, *rbe) - q)
+    oldz = ipm.G_(x, *rbe) - h
     alpha_p = torch.max(oldz, 0).values
     flag = (alpha_p < 0).type(h.dtype).repeat(oldz.shape[0], 1)
     s = flag * (-oldz) + (1 - flag) * (-oldz + (1 + alpha_p))
@@ -268,31 +286,47 @@ def ipm_start_solve(ipm, h, q):
     z = flag * (oldz) + (1 - flag) * (oldz + 1 + alpha_d)
     return x, s, z
 
-@torch.compile
 def ipm_kkt_res(ipm, q, h, x, s, z):
     rbe = ipm.nλn, ipm.nt, ipm.nf, ipm.mu
     rbeQ = ipm.nλn, ipm.nt, ipm.iAs, ipm.iBs, ipm.nAs, ipm.nBs, ipm.invM
-    r1 = Q_(x, *rbeQ) + q + GT_(z, *rbe)
+    r1 = ipm.Q_(x, *rbeQ) + q + ipm.GT_(z, *rbe)
     r2 = s * z
-    r3 = G_(x, *rbe) + s - h
+    r3 = ipm.G_(x, *rbe) + s - h
     kkt_res = inf_norm(torch.vstack([r1, r2, r3]))
     return r1, r2, r3, kkt_res
 
-@torch.compile
 def ipm_precond(ipm, s, z):
     ZS = z / s
-    GTZSG = torch.einsum("ji, jb -> ib", ipm.GG, ZS)
-    invM = GTZSG + ipm.diagQ[:, None]
+    diagG = torch.einsum("ji, jb -> ib", ipm.GG, ZS)
+    invM = diagG + ipm.diagQ[:, None]
     invM = 1.0 / invM
     return invM
 
-@torch.compile
+def ipm_linesearch(s, ds, z, dz, n_sample=32):
+    alpha = torch.linspace(0, 1, n_sample, device=device, dtype=s.dtype)
+    ls = s[None, :, :] + alpha[:, None, None] * ds[None, :, :]
+    lz = z[None, :, :] + alpha[:, None, None] * dz[None, :, :]
+    flag = torch.logical_and((ls >= 0).all(dim=1), (lz >= 0).all(dim=1)).type(s.dtype)
+    inds = torch.arange(n_sample, device=device, dtype=s.dtype)
+    inds = flag * inds[:, None]
+    ind = torch.max(inds, dim=0).values.to(torch.long)
+    return alpha[ind]
+
+def centering_params(s, z, ds_a, dz_a, n_sample):
+    """duality gap + cc term in predictor-corrector PDIP"""
+    sz = torch.sum(s * z, dim=0)
+    mu = sz / s.shape[0]
+    alpha = ipm_linesearch(s, ds_a, z, dz_a, n_sample=n_sample)
+    sigma = torch.sum((s + alpha * ds_a) * (z + alpha * dz_a), dim=0) / sz
+    sigma = sigma ** 3
+    return sigma, mu
+
 def ipm_solve_rhs(ipm, s, z, invP, v1, v2, v3, n_iter, dx=None):
-    rbe = ipm.nλn, ipm.nt, ipm.nf, ipm.mu
+    rbeG = ipm.nλn, ipm.nt, ipm.nf, ipm.mu
     rbeQ = ipm.nλn, ipm.nt, ipm.iAs, ipm.iBs, ipm.nAs, ipm.nBs, ipm.invM
 
     ZS = z / s
-    b = GT_((z * v3 - v2) / s, *rbe) + v1
+    b = ipm.GT_((z * v3 - v2) / s, *rbeG) + v1
 
     if dx is None:
         dx = torch.zeros_like(b)
@@ -300,7 +334,7 @@ def ipm_solve_rhs(ipm, s, z, invP, v1, v2, v3, n_iter, dx=None):
         rk = b.clone()
     else:
         xk = dx.clone()
-        rk = b - (GTZSG(dx, ZS, *rbe) + Q_(dx, *rbeQ))
+        rk = b - (ipm.GTZSG_(dx, ZS, *rbeG) + ipm.Q_(dx, *rbeQ))
         dx = torch.zeros_like(b)
 
     dx_rk = torch.ones(b.shape[1], device=device, dtype=b.dtype) * torch.inf
@@ -314,7 +348,7 @@ def ipm_solve_rhs(ipm, s, z, invP, v1, v2, v3, n_iter, dx=None):
         for t in range(ipm.n_pcg_eval_iter):
             # Apk = GT @ (ZS * (G @ pk)) + Q @ pk
             # fast computation
-            Apk = GTZSG(pk, ZS, *rbe) + Q_(pk, *rbeQ)
+            Apk = ipm.GTZSG_(pk, ZS, *rbeG) + ipm.Q_(pk, *rbeQ)
 
             ru = torch.sum(rk * uk, dim=0)
             ak = ru / torch.sum(pk * Apk, dim=0)
@@ -331,34 +365,13 @@ def ipm_solve_rhs(ipm, s, z, invP, v1, v2, v3, n_iter, dx=None):
         dx_rk[flag] = error[flag]
 
         # recompute the residual to avoid numerical errors
-        rk = b - (GTZSG(xk, ZS, *rbe) + Q_(xk, *rbeQ))
+        rk = b - (ipm.GTZSG_(xk, ZS, *rbeG) + ipm.Q_(xk, *rbeQ))
         uk = invP * rk
     #end_timer('pcg')
 
-    ds = v3 - G_(dx, *rbe)
+    ds = v3 - ipm.G_(dx, *rbeG)
     dz = (v2 - z * ds) / s
     return dx, ds, dz
-
-@torch.compile
-def linesearch(s, ds, z, dz, n_sample=32):
-    alpha = torch.linspace(0, 1, n_sample, device=device, dtype=s.dtype)
-    ls = s[None, :] + torch.einsum('i, jk -> ijk', alpha, ds)
-    lz = z[None, :] + torch.einsum('i, jk -> ijk', alpha, dz)
-    flag = torch.logical_and((ls >= 0).all(dim=1), (lz >= 0).all(dim=1))
-    inds = torch.arange(n_sample, device=device, dtype=s.dtype)
-    inds = torch.einsum('ib, i -> ib', flag, inds)
-    ind = torch.max(inds, dim=0).values.to(torch.long)
-    return alpha[ind]
-
-@torch.compile
-def centering_params(s, z, ds_a, dz_a, n_sample):
-    """duality gap + cc term in predictor-corrector PDIP"""
-    sz = torch.sum(s * z, dim=0)
-    mu = sz / s.shape[0]
-    alpha = linesearch(s, ds_a, z, dz_a, n_sample=n_sample)
-    sigma = torch.sum((s + alpha * ds_a) * (z + alpha * dz_a), dim=0) / sz
-    sigma = sigma ** 3
-    return sigma, mu
 
 def simulate_ipm(batch_part_states: list[dict],
                  settings: dict):
@@ -378,28 +391,6 @@ def simulate_ipm(batch_part_states: list[dict],
     inds = torch.arange(s.shape[1], dtype=torch.long, device=device)
     kkt_res_best = torch.ones(part_states.shape[0], device=device, dtype=floatType) * torch.inf
     r1, r2, r3, kkt_res = ipm_kkt_res(ipm, q, h, x, s, z)
-
-    # rbeQ = ipm.nλn, ipm.nt, ipm.iAs, ipm.iBs, ipm.nAs, ipm.nBs, ipm.invM
-    # #
-    # Qx = ipm.Q @ x
-    # Qx_new = Q_(x, *rbeQ)
-    # print(torch.linalg.norm(Qx - Qx_new))
-    #
-    # y = x.clone()
-    # reset_timer('Qx')
-    # for it in range(1000):
-    #     Qx = ipm.Q @ y
-    #     y = y + 1
-    # end_timer('Qx')
-    #
-    # y = x.clone()
-    # reset_timer('Qx_')
-    # for it in range(1000):
-    #     Qx = Q_(y, *rbeQ)
-    #     y = y + 1
-    # end_timer('Qx_')
-    #
-    # return None, None
 
     # ipm main loop
     reset_timer('ipm')
@@ -435,7 +426,7 @@ def simulate_ipm(batch_part_states: list[dict],
 
         # 5. step size and update
         reset_timer('linesearch')
-        alpha = 0.99 * linesearch(s, ds, z, dz, n_sample=ipm.n_linesearch)
+        alpha = 0.99 * ipm_linesearch(s, ds, z, dz, n_sample=ipm.n_linesearch)
         end_timer('linesearch')
 
         reset_timer('update')
@@ -462,7 +453,7 @@ def simulate_ipm(batch_part_states: list[dict],
         end_timer('update')
 
     xclip = torch.clip(result_x, xl, xu)
-    velocity, velocity_inf_nrm = evaluate_result(xclip, ps, ipm)
+    velocity, velocity_inf_nrm = ipm_evaluate_result(ipm, xclip, ps)
     end_timer('ipm')
     return velocity.cpu().numpy(), (velocity_inf_nrm < rbe.velocity_tol).cpu().numpy()
 
@@ -556,8 +547,8 @@ if __name__ == '__main__':
     # test
     default_settings['rbe']['density'] = 1000
     default_settings['rbe']['mu'] = 0.5
-    default_settings['rbe']['Ccp'] = 5000
-    default_settings["assembly"]["contact_shrink_ratio"] = 0  # for robustnessly computing the contact surfaces
+    default_settings['rbe']['Ccp'] = 500
+    default_settings["assembly"]["contact_shrink_ratio"] = 0.0  # for robustnessly computing the contact surfaces
 
     n_batch = 512
     torch.manual_seed(0)
@@ -576,7 +567,7 @@ if __name__ == '__main__':
     # part_states = part_states[torch.randperm(part_states.shape[0]), :]
     part_states = part_states[:n_batch, :]
 
-    default_settings['gurobi'] = {}
+    #default_settings['gurobi'] = {}
     default_settings['ipm'] = {
         "n_iter": 30,
         "n_pcg_iter_1": 200,
@@ -586,14 +577,16 @@ if __name__ == '__main__':
         "kkt_conv_eps": 1E-5,
         "x_bound_tol": 1E-6,
         "float_type": torch.float32,
+        "use_Q_fast": False,
     }
     contacts = compute_assembly_contacts(parts, default_settings)
     init_rbe(parts, contacts, default_settings)
     init_ipm(parts, contacts, default_settings)
     ipm = SimpleNamespace(**default_settings["ipm"])
 
+    print("start simulation")
     v_fp32, stable_fp32 = simulate(parts, contacts, part_states, default_settings)
-    print_logger(n_batch)
+    print_logger(part_states.shape[0])
     print(np.sum(stable_fp32) / n_batch)
 
     # render
