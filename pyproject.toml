@@ -19,8 +19,8 @@ dependencies = [
     "warp-lang",
     "rtree",
     "setuptools",
-    "pytorch-triton"
-    "triton == 3.2.0",
+    "pytorch-triton",
+    "triton == 3.2.0"
 ]
 
 description = "A package for conducting research using robots for assembly"
