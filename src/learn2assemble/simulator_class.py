@@ -397,6 +397,7 @@ class IpmSim(torch.nn.Module):
         invM = 1.0 / invM
         return invM
 
+    @torch.compiler.disable
     def ipm_linesearch(self, s, ds, z, dz, n_sample=32):
         device = s.device
         alpha = torch.linspace(0, 1, n_sample, device=device, dtype=s.dtype)
@@ -623,6 +624,7 @@ if __name__ == '__main__':
         "pcg_rel_eps": 0.1,
         "float_type": torch.float32,
     }
+
     contacts = compute_assembly_contacts(parts, default_settings)
     init_ipm(parts, contacts, default_settings)
     ipm_auto_parameters(settings = default_settings)
