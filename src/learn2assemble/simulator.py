@@ -570,6 +570,12 @@ class IpmSim(torch.nn.Module):
                 new_settings['device'] = new_settings[n].device
             else:
                 new_settings[n] = copy.deepcopy(val)
+        
+        new_settings['Q_'] = torch.compile(Q_)
+        new_settings['GT_'] = torch.compile(GT_)
+        new_settings['G_'] = torch.compile(G_)
+        new_settings['GTZSG_'] = torch.compile(GTZSG_)
+
         velocity, stable_flag = simulate_ipm(x, new_settings)
         return stable_flag
 
