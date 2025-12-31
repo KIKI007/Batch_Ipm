@@ -632,7 +632,7 @@ class IpmSim(torch.nn.Module):
                 self.ipm_settings[n] = self.get_buffer(n)
                 self.ipm_settings['device'] = self.ipm_settings[n].device
                 print(self.ipm_settings[n].device)
-        print(x.device)
+        #print(x.device)
         return simulate_ipm(x, self.ipm_settings)
 
 def simulate(parts: list[Trimesh],
@@ -705,7 +705,7 @@ if __name__ == '__main__':
 
     sim = IpmSim(default_settings["ipm"])
     sim = torch.nn.DataParallel(sim)
-
+    
     print("start simulation")
     part_states = part_states.to(device = 'cuda:1')
     v_fp32, stable_fp32 = sim(part_states)
