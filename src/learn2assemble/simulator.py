@@ -631,7 +631,8 @@ class IpmSim(torch.nn.Module):
             if torch.is_tensor(val):
                 self.ipm_settings[n] = self.get_buffer(n)
                 self.ipm_settings['device'] = self.ipm_settings[n].device
-        return simulate_ipm(x, self.ipm_settings)
+        velocity, stable_flag = simulate_ipm(x, self.ipm_settings)
+        return stable_flag
 
 def simulate(parts: list[Trimesh],
              contacts: list[dict],
