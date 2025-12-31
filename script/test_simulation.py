@@ -1,14 +1,12 @@
 from learn2assemble import default_settings
 from learn2assemble.assembly import load_assembly_from_files, compute_assembly_contacts
-from learn2assemble.simulator_class import init_ipm, print_logger, simulate, ipm_search_best_parameters
+from learn2assemble.backup.simulator_class import init_ipm, print_logger, ipm_search_best_parameters
 from learn2assemble.render import *
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
 import torch
 import platform
 import os
-from os import listdir
-from os.path import isfile, join
 import learn2assemble
 
 if platform.system() == 'Windows':

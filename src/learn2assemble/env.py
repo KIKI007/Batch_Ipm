@@ -1,11 +1,10 @@
 from types import SimpleNamespace
 
 import numpy as np
-import learn2assemble.simulator_class
+import learn2assemble.backup.simulator_class
 from time import perf_counter
 
 from trimesh import Trimesh
-from learn2assemble import update_default_settings
 from learn2assemble.buffer import RolloutBuffer
 from multiprocessing import Process, Queue
 
@@ -299,7 +298,6 @@ def env_debug(parts:list[Trimesh], settings:dict, queue: Queue):
 
 if __name__ == "__main__":
     from learn2assemble import ASSEMBLY_RESOURCE_DIR, update_default_settings, default_settings
-    import torch
     from learn2assemble.render import render_batch_simulation
     from learn2assemble import ASSEMBLY_RESOURCE_DIR
     from learn2assemble.assembly import load_assembly_from_files, compute_assembly_contacts

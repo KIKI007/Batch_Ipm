@@ -679,7 +679,7 @@ if __name__ == '__main__':
         "n_pcg_eval_iter": 10,
         "pcg_rel_eps": 0.1,
         "float_type": torch.float32,
-        "compile": True,
+        "compile": False,
     }
     reset_timer('contact')
     contacts = compute_assembly_contacts(parts, default_settings)
