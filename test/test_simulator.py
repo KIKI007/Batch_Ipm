@@ -1,5 +1,5 @@
 from time import perf_counter
-from learn2assemble.simulator import *
+from learn2assemble.simulator_class import *
 from learn2assemble.assembly import *
 from learn2assemble import ASSEMBLY_RESOURCE_DIR, default_settings
 

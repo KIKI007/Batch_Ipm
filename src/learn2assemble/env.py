@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
 import numpy as np
-import learn2assemble.simulator
+import learn2assemble.simulator_class
 from time import perf_counter
 
 from trimesh import Trimesh

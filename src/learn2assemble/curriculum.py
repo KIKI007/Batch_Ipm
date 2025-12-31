@@ -6,7 +6,7 @@ import warnings
 import torch
 from scipy.cluster.vq import kmeans2
 from trimesh import Trimesh
-import learn2assemble.simulator
+import learn2assemble.simulator_class
 import time
 from learn2assemble import update_default_settings
 from learn2assemble.grasp import check_future_graspability, compute_grasp_frame, compute_grasp_table

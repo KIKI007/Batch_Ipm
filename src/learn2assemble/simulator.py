@@ -1,10 +1,5 @@
 import copy
-import math
 from time import perf_counter
-import scipy as sp
-from trimesh import Trimesh
-import torch
-import numpy as np
 import gurobipy as gp
 from gurobipy import GRB
 from learn2assemble.rbe import *
@@ -201,7 +196,7 @@ def init_ipm(parts: list[Trimesh],
                                       "pcg_rel_eps": 1E-2,
                                       "x_bound_tol": 1E-6,
                                       "float_type": torch.float32,
-                                      "use_Q_fast": True,
+                                      "compile": True,
                                       "device" : torch.device("cuda" if torch.cuda.is_available() else "cpu")})
 
     ipm = update_default_settings(settings,
@@ -215,22 +210,19 @@ def init_ipm(parts: list[Trimesh],
     ipm['density'] = compute_best_density(parts, ipm['boundary_part_ids'])
     ipm_contacts(ipm, parts, contacts, ipm['density'], ipm['boundary_part_ids'])
 
-    if platform.system() == 'Windows':
+    if platform.system() == 'Windows' or not ipm['compile']:
         disable_compile = True
     else:
         disable_compile = False
 
-    disable_compile = True
+    # compile function
     torch.set_float32_matmul_precision('high')
     ipm['Q_'] = torch.compile(Q_, disable=disable_compile)
     ipm['GT_'] = torch.compile(GT_, disable=disable_compile)
     ipm['G_'] = torch.compile(G_, disable=disable_compile)
     ipm['GTZSG_'] = torch.compile(GTZSG_, disable=disable_compile)
 
-    #ipm['Q_'] = lambda x, *kwargs: ipm['Q'] @ x
-    # ipm['ipm_solve_rhs'] = torch.compile(ipm_solve_rhs)
-
-    #
+    # compute pre-conditioner
     nx = ipm['nλn'] * (ipm["nt"] + 1) + ipm["nf"]
     rbeG = ipm["nλn"], ipm["nt"], ipm["nf"], ipm["mu"]
     rbeQ = ipm['nλn'], ipm['nt'], ipm['iAs'], ipm['iBs'], ipm['nAs'], ipm['nBs'], ipm['invM']
@@ -241,7 +233,7 @@ def init_ipm(parts: list[Trimesh],
     ipm['diagQ'] = torch.diagonal(ipm['Q'])
 
     #
-    H = GT_(G, *rbeG) + ipm['Q']
+    H = ipm['GT_'](G, *rbeG) + ipm['Q']
     cholesky_H = torch.linalg.cholesky(H)
     ipm['cholesky_H'] = cholesky_H
 
@@ -331,7 +323,7 @@ def ipm_start_solve(ipm, h, q):
     b = ipm.GT_(h, *rbe) - q
     x = torch.cholesky_solve(b, ipm.cholesky_H)
 
-    oldz = ipm.G_(x, *rbe) - h
+    oldz = G_(x, *rbe) - h
     alpha_p = torch.max(oldz, 0).values
     flag = (alpha_p < 0).type(h.dtype).repeat(oldz.shape[0], 1)
     s = flag * (-oldz) + (1 - flag) * (-oldz + (1 + alpha_p))
@@ -346,7 +338,7 @@ def ipm_kkt_res(ipm, q, h, x, s, z):
     rbeQ = ipm.nλn, ipm.nt, ipm.iAs, ipm.iBs, ipm.nAs, ipm.nBs, ipm.invM
     r1 = ipm.Q_(x, *rbeQ) + q + ipm.GT_(z, *rbe)
     r2 = s * z
-    r3 = ipm.G_(x, *rbe) + s - h
+    r3 = G_(x, *rbe) + s - h
     kkt_res = inf_norm(torch.vstack([r1, r2, r3]))
     return r1, r2, r3, kkt_res
 
@@ -680,16 +672,14 @@ if __name__ == '__main__':
     part_states = part_states[inds, :]
 
     # random
-    # part_states = part_states[torch.randperm(part_states.shape[0]), :]
     part_states = part_states[:n_batch, :]
 
-    #default_settings['gurobi'] = {}
     default_settings['ipm'] = {
         "n_iter": 30,
         "n_pcg_eval_iter": 10,
         "pcg_rel_eps": 0.1,
         "float_type": torch.float32,
-        "use_Q_fast": True,
+        "compile": True,
     }
     reset_timer('contact')
     contacts = compute_assembly_contacts(parts, default_settings)
@@ -704,13 +694,15 @@ if __name__ == '__main__':
     end_timer('auto parameter')
 
     sim = IpmSim(default_settings["ipm"])
-    sim = torch.nn.DataParallel(sim)
+    parallel_sim = torch.nn.DataParallel(sim)
 
-    print("start simulation")
-    part_states = part_states.to(device = 'cuda:0')
-    stable_fp32 = sim(part_states)
-    print_logger(stable_fp32.shape[0])
-    print(np.sum(stable_fp32) / stable_fp32.shape[0])
+    torch.cuda.synchronize()
+    timer = perf_counter()
+    stable_fp32 = parallel_sim(part_states)
+
+    torch.cuda.synchronize()
+    print("time ", perf_counter() - timer)
+    print(torch.sum(stable_fp32).item() / stable_fp32.shape[0])
 
     # render
     # import polyscope as ps
