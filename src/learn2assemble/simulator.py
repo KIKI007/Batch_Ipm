@@ -1,6 +1,5 @@
 import math
 from time import perf_counter
-
 import scipy as sp
 from trimesh import Trimesh
 import torch
@@ -10,7 +9,7 @@ from gurobipy import GRB
 from learn2assemble.rbe import *
 from types import SimpleNamespace
 import platform
-from rbe import num_vars
+from learn2assemble.rbe import num_vars
 
 logger = {
     'timer' : {},
@@ -179,10 +178,12 @@ def ipm_contacts(ipm, parts, contacts, density, boundary_part_ids):
         M.append(np.linalg.inv(Ii))
 
         # gravity
-        ipm['g'][part_id * 6 + 2] = -volumes[part_id] * density
+        if part_id not in boundary_part_ids:
+            ipm['g'][part_id * 6 + 2] = -volumes[part_id] * density
 
     M = np.stack(M)
     ipm['invM'] = torch.tensor(M, device=device, dtype=ipm['float_type'])
+
 
 def init_ipm(parts: list[Trimesh],
              contacts: list[dict],
@@ -192,11 +193,11 @@ def init_ipm(parts: list[Trimesh],
                                   "ipm",
                                   {
                                       "n_iter": 30,
-                                      "n_pcg_iter_1": 100,
-                                      "n_pcg_iter_2": 50,
+                                      "n_pcg_iter": 100,
                                       "n_pcg_eval_iter": 20,
                                       "n_linesearch": 32,
                                       "kkt_conv_eps": 1E-5,
+                                      "pcg_rel_eps": 1E-2,
                                       "x_bound_tol": 1E-6,
                                       "float_type": torch.float32,
                                       "use_Q_fast": True,
@@ -210,7 +211,7 @@ def init_ipm(parts: list[Trimesh],
 
     ipm['n_part'] = len(parts)
     ipm['boundary_part_ids'] = settings['env']['boundary_part_ids']
-    ipm['density'] = compute_best_density(parts)
+    ipm['density'] = compute_best_density(parts, ipm['boundary_part_ids'])
     ipm_contacts(ipm, parts, contacts, ipm['density'], ipm['boundary_part_ids'])
 
     if platform.system() == 'Windows':
@@ -393,7 +394,7 @@ def ipm_solve_rhs(ipm, s, z, invP, v1, v2, v3, n_iter, dx=None):
         rk = b - (ipm.GTZSG_(dx, ZS, *rbeG) + ipm.Q_(dx, *rbeQ))
         dx = torch.zeros_like(b)
 
-    dx_rk = torch.ones(b.shape[1], device=device, dtype=b.dtype) * torch.inf
+    dx_rk = torch.ones(b.shape[1], device=device, dtype=b.dtype) * 1E9
 
     uk = invP * rk
     pk = uk.clone()
@@ -415,15 +416,19 @@ def ipm_solve_rhs(ipm, s, z, invP, v1, v2, v3, n_iter, dx=None):
             pk = uk + betak[None, :] * pk
 
         # only update x when rk decrease
+        prev_rk = dx_rk.clone()
         error = inf_norm(rk)
         flag = error < dx_rk
         dx[:, flag] = xk[:, flag]
         dx_rk[flag] = error[flag]
+        rel = torch.max(torch.abs(dx_rk - prev_rk) / prev_rk)
 
         # recompute the residual to avoid numerical errors
         rk = b - (ipm.GTZSG_(xk, ZS, *rbeG) + ipm.Q_(xk, *rbeQ))
         uk = invP * rk
-    #end_timer('pcg')
+
+        if rel < ipm.pcg_rel_eps:
+            break
 
     ds = v3 - ipm.G_(dx, *rbeG)
     dz = (v2 - z * ds) / s
@@ -440,6 +445,11 @@ def get_dynamic_attrib(batch_part_states, rbe, float_type):
     ps = torch.tensor(ps, dtype=float_type, device=device)
     cs = torch.tensor(cs, dtype=float_type, device=device)
     return q, xl, xu, Al, Au, ps, cs
+
+def ipm_update_device(ipm, device):
+    for name, val in ipm.items():
+        if torch.is_tensor(val):
+            ipm[name] = val.to(device)
 
 def simulate_ipm(batch_part_states: list[dict],
                  settings: dict):
@@ -476,7 +486,7 @@ def simulate_ipm(batch_part_states: list[dict],
 
         # 2. solve kkt 1
         reset_timer('kkt 1')
-        dx_a, ds_a, dz_a = ipm_solve_rhs(ipm, s, z, invP, -r1, -r2, -r3, n_iter=ipm.n_pcg_iter_1)
+        dx_a, ds_a, dz_a = ipm_solve_rhs(ipm, s, z, invP, -r1, -r2, -r3, n_iter=ipm.n_pcg_iter)
         end_timer('kkt 1')
 
         # 3. centering parameters
@@ -493,7 +503,7 @@ def simulate_ipm(batch_part_states: list[dict],
 
         # option 2
         r2 = (sigma * mu - (ds_a * dz_a))
-        dx, ds, dz = ipm_solve_rhs(ipm, s, z, invP, 0, r2, 0, n_iter=ipm.n_pcg_iter_2)
+        dx, ds, dz = ipm_solve_rhs(ipm, s, z, invP, 0, r2, 0, n_iter=ipm.n_pcg_iter)
         dx, ds, dz = dx + dx_a, ds + ds_a, dz + dz_a
         end_timer('kkt 2')
 
@@ -534,36 +544,43 @@ def ipm_search_best_parameters(part_states, tol, settings: dict):
     # decide Ccp
     complete_states = torch.ones((1, settings["ipm"]["n_part"]), dtype=torch.long)
     complete_states[:, settings["ipm"]["boundary_part_ids"]] = 2
-    for Ccp in [5, 10, 50, 100]:
-        settings['ipm']['n_pcg_iter_1'] = 400
-        settings['ipm']['n_pcg_iter_2'] = 200
-        settings["ipm"]["Ccp"] = Ccp
-        _, stable_fp32 = simulate_ipm(complete_states, settings)
-        if stable_fp32.any():
-            print("density = ", settings["ipm"]["density"])
-            print("Ccp = ", settings["ipm"]["Ccp"])
-            break
-    else:
-        print("no solution found for Ccp")
-        return False
+    settings["ipm"]["Ccp"] = 1.1 * abs(torch.sum(settings['ipm']['g']).item())
+    settings["ipm"]["n_pcg_iter"] = int((settings["ipm"]["Q"].shape[0] * 0.1) // 10 * 10)
+    print("density = ", settings["ipm"]["density"])
+    print("Ccp = ", settings["ipm"]["Ccp"])
+    print("num pcg iter = ", settings["ipm"]["n_pcg_iter"])
 
-    # decide pcg_iter 1/2
-    n_pcg_iter_1s = [50, 100, 200, 300, 400, 500]
-    n_pcg_iter_2s = [50, 50, 100, 100, 200, 200]
-    for n_pcg_iter_1, n_pcg_iter_2 in zip(n_pcg_iter_1s, n_pcg_iter_2s):
-        settings['ipm']['n_pcg_iter_1'] = n_pcg_iter_1
-        settings['ipm']['n_pcg_iter_2'] = n_pcg_iter_2
-        _, stable_fp32 = simulate_ipm(part_states, settings)
-        rate = np.sum(stable_fp32) / stable_fp32.shape[0]
-        if rate > tol:
-            print("n_pcg_iter_1 = ", settings["ipm"]["n_pcg_iter_1"])
-            print("n_pcg_iter_2 = ", settings["ipm"]["n_pcg_iter_2"])
-            break
-        #else:
-            #print("success rate", rate)
-    else:
-        print("no solution found for pcg iter 1/2")
-        return False
+    # for Ccp in [1, 5, 10, 50, 100]:
+    #     settings['ipm']['n_pcg_iter_1'] = 500
+    #     settings['ipm']['n_pcg_iter_2'] = 500
+    #     settings["ipm"]["Ccp"] = Ccp * abs(torch.sum(settings['ipm']['g']).item())
+    #     _, stable_fp32 = simulate_ipm(complete_states, settings)
+    #     print(_)
+    #     if stable_fp32.any():
+    #         print("density = ", settings["ipm"]["density"])
+    #         print("Ccp = ", settings["ipm"]["Ccp"])
+    #         break
+    # else:
+    #     print("no solution found for Ccp")
+    #     return False
+
+    # # decide pcg_iter 1/2
+    # n_pcg_iter_1s = [50, 100, 200, 300, 400]
+    # n_pcg_iter_2s = [50, 50, 100, 100, 200]
+    # for n_pcg_iter_1, n_pcg_iter_2 in zip(n_pcg_iter_1s, n_pcg_iter_2s):
+    #     settings['ipm']['n_pcg_iter_1'] = n_pcg_iter_1
+    #     settings['ipm']['n_pcg_iter_2'] = n_pcg_iter_2
+    #     _, stable_fp32 = simulate_ipm(part_states, settings)
+    #     rate = np.sum(stable_fp32) / stable_fp32.shape[0]
+    #     if rate > tol:
+    #         print("n_pcg_iter_1 = ", settings["ipm"]["n_pcg_iter_1"])
+    #         print("n_pcg_iter_2 = ", settings["ipm"]["n_pcg_iter_2"])
+    #         break
+    #     #else:
+    #         #print("success rate", rate)
+    # else:
+    #     print("no solution found for pcg iter 1/2")
+    #     return False
 
     return True
 
@@ -680,9 +697,9 @@ if __name__ == '__main__':
     #default_settings['gurobi'] = {}
     default_settings['ipm'] = {
         "n_iter": 30,
-        "n_pcg_iter_1": 200,
-        "n_pcg_iter_2": 100,
+        "n_pcg_iter": 400,
         "n_pcg_eval_iter": 10,
+        "pcg_rel_eps": 1E-2,
         "n_linesearch": 32,
         "kkt_conv_eps": 1E-5,
         "x_bound_tol": 1E-6,
@@ -703,7 +720,7 @@ if __name__ == '__main__':
 
     print("start simulation")
     v_fp32, stable_fp32 = simulate(parts, contacts, part_states, default_settings)
-    print_logger(1)
+    print_logger(stable_fp32.shape[0])
     #print_logger(part_states.shape[0])
     print(np.sum(stable_fp32) / stable_fp32.shape[0])
 
