@@ -1,3 +1,4 @@
+import copy
 import math
 from time import perf_counter
 import scipy as sp
@@ -447,16 +448,20 @@ def get_dynamic_attrib(batch_part_states, rbe, float_type):
     return q, xl, xu, Al, Au, ps, cs
 
 def ipm_update_device(ipm, device):
+    new_ipm = {}
     for name, val in ipm.items():
         if torch.is_tensor(val):
-            ipm[name] = val.to(device)
+            new_ipm[name] = val.clone().to(device)
+        else:
+            new_ipm[name] = copy.deepcopy(val)
+    new_ipm["device"] = device
+    return new_ipm
 
-def simulate_ipm(batch_part_states: list[dict],
-                 settings: dict):
+def simulate_ipm(batch_part_states: list[dict], ipm_settings):
 
     # name space
     reset_timer('ipm')
-    ipm = SimpleNamespace(**settings["ipm"])
+    ipm = SimpleNamespace(**ipm_settings)
     floatType = ipm.float_type
     device = ipm.device
 
@@ -540,48 +545,13 @@ def simulate_ipm(batch_part_states: list[dict],
     end_timer('ipm')
     return velocity.cpu().numpy(), (velocity_inf_nrm < ipm.velocity_tol).cpu().numpy()
 
-def ipm_search_best_parameters(part_states, tol, settings: dict):
+def ipm_auto_parameters(settings: dict):
     # decide Ccp
-    complete_states = torch.ones((1, settings["ipm"]["n_part"]), dtype=torch.long)
-    complete_states[:, settings["ipm"]["boundary_part_ids"]] = 2
     settings["ipm"]["Ccp"] = 1.1 * abs(torch.sum(settings['ipm']['g']).item())
-    settings["ipm"]["n_pcg_iter"] = int((settings["ipm"]["Q"].shape[0] * 0.1) // 10 * 10)
+    settings["ipm"]["n_pcg_iter"] = int((settings["ipm"]["Q"].shape[0] * 0.02) // 10 * 10)
     print("density = ", settings["ipm"]["density"])
     print("Ccp = ", settings["ipm"]["Ccp"])
     print("num pcg iter = ", settings["ipm"]["n_pcg_iter"])
-
-    # for Ccp in [1, 5, 10, 50, 100]:
-    #     settings['ipm']['n_pcg_iter_1'] = 500
-    #     settings['ipm']['n_pcg_iter_2'] = 500
-    #     settings["ipm"]["Ccp"] = Ccp * abs(torch.sum(settings['ipm']['g']).item())
-    #     _, stable_fp32 = simulate_ipm(complete_states, settings)
-    #     print(_)
-    #     if stable_fp32.any():
-    #         print("density = ", settings["ipm"]["density"])
-    #         print("Ccp = ", settings["ipm"]["Ccp"])
-    #         break
-    # else:
-    #     print("no solution found for Ccp")
-    #     return False
-
-    # # decide pcg_iter 1/2
-    # n_pcg_iter_1s = [50, 100, 200, 300, 400]
-    # n_pcg_iter_2s = [50, 50, 100, 100, 200]
-    # for n_pcg_iter_1, n_pcg_iter_2 in zip(n_pcg_iter_1s, n_pcg_iter_2s):
-    #     settings['ipm']['n_pcg_iter_1'] = n_pcg_iter_1
-    #     settings['ipm']['n_pcg_iter_2'] = n_pcg_iter_2
-    #     _, stable_fp32 = simulate_ipm(part_states, settings)
-    #     rate = np.sum(stable_fp32) / stable_fp32.shape[0]
-    #     if rate > tol:
-    #         print("n_pcg_iter_1 = ", settings["ipm"]["n_pcg_iter_1"])
-    #         print("n_pcg_iter_2 = ", settings["ipm"]["n_pcg_iter_2"])
-    #         break
-    #     #else:
-    #         #print("success rate", rate)
-    # else:
-    #     print("no solution found for pcg iter 1/2")
-    #     return False
-
     return True
 
 def init_gurobi(parts, contacts, settings: dict):
@@ -646,6 +616,23 @@ def simulate_gurobi(batch_part_states: list[dict],
     end_timer('gurobi')
     return vs, np.array(flags)
 
+# for parallel gpus
+class IpmSim(torch.nn.Module):
+    def __init__(self, ipm_settings):
+        super().__init__()
+        self.ipm_settings = ipm_update_device(ipm_settings, device=ipm_settings['device'])
+        for n, val in self.ipm_settings.items():
+            if torch.is_tensor(val):
+                self.register_buffer(n, tensor = self.ipm_settings[n], persistent=False)
+
+    @torch.no_grad()
+    def forward(self, x):
+        for n, val in self.ipm_settings.items():
+            if torch.is_tensor(val):
+                self.ipm_settings[n] = self.get_buffer(n)
+                self.ipm_settings['device'] = self.ipm_settings[n].device
+        return simulate_ipm(x, self.ipm_settings)
+
 def simulate(parts: list[Trimesh],
              contacts: list[dict],
              batch_part_states: list[dict],
@@ -663,7 +650,7 @@ def simulate(parts: list[Trimesh],
         ipm_computed = settings.get("ipm", {"pre-computed": False}).get("pre-computed", False)
         if not ipm_computed:
             init_ipm(parts, contacts, settings)
-        return simulate_ipm(batch_part_states, settings)
+        return simulate_ipm(batch_part_states, settings["ipm"])
 
 if __name__ == '__main__':
     from learn2assemble import ASSEMBLY_RESOURCE_DIR, default_settings, RESOURCE_DIR
@@ -697,12 +684,8 @@ if __name__ == '__main__':
     #default_settings['gurobi'] = {}
     default_settings['ipm'] = {
         "n_iter": 30,
-        "n_pcg_iter": 400,
         "n_pcg_eval_iter": 10,
-        "pcg_rel_eps": 1E-2,
-        "n_linesearch": 32,
-        "kkt_conv_eps": 1E-5,
-        "x_bound_tol": 1E-6,
+        "pcg_rel_eps": 0.1,
         "float_type": torch.float32,
         "use_Q_fast": True,
     }
@@ -714,12 +697,14 @@ if __name__ == '__main__':
     init_ipm(parts, contacts, default_settings)
     end_timer('init ipm')
 
-    reset_timer('search parameter')
-    ipm_search_best_parameters(part_states[:32, ], tol = 0.8,  settings = default_settings)
-    end_timer('search parameter')
+    reset_timer('auto parameter')
+    ipm_auto_parameters(settings = default_settings)
+    end_timer('auto parameter')
 
+    sim = IpmSim(default_settings["ipm"])
+    model = torch.nn.DataParallel(sim)
     print("start simulation")
-    v_fp32, stable_fp32 = simulate(parts, contacts, part_states, default_settings)
+    v_fp32, stable_fp32 = sim(part_states)
     print_logger(stable_fp32.shape[0])
     #print_logger(part_states.shape[0])
     print(np.sum(stable_fp32) / stable_fp32.shape[0])
