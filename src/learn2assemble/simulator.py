@@ -707,10 +707,8 @@ if __name__ == '__main__':
 
     print("start simulation")
     part_states = part_states.to(device = 'cuda:0')
-    result = sim(part_states)
-    print(result)
+    stable_fp32 = sim(part_states)
     print_logger(stable_fp32.shape[0])
-    #print_logger(part_states.shape[0])
     print(np.sum(stable_fp32) / stable_fp32.shape[0])
 
     # render
