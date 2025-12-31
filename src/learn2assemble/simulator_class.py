@@ -559,7 +559,7 @@ class IpmSim(torch.nn.Module):
 
     def forward(self, x):
         new_settings = {}
-        print(self.get_buffer)
+        print(self._buffers)
         for n, val in self.ipm_settings.items():
             if torch.is_tensor(val):
                 new_settings[n] = self.get_buffer(n)
