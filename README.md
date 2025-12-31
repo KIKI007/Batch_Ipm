@@ -25,7 +25,7 @@ Error may occur if you have not obtained Gurobi License. However, this does not 
 ### Option 2. Installation inside a docker container
 1. Install Pytorch (this step can be skipped if container has the right version of pytorch)
 ```bash
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124 # 40 series
+uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124 # 40 series
 # uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128 # 50 series
 ```
 2. Install the package

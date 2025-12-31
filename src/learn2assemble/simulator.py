@@ -9,8 +9,9 @@ import gurobipy as gp
 from gurobipy import GRB
 from learn2assemble.rbe import *
 from types import SimpleNamespace
+import platform
+from rbe import num_vars
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 logger = {
     'timer' : {},
     'log': {},
@@ -114,68 +115,16 @@ def print_logger(nbatch = 1.0, names = []):
                 if name in logger['log']:
                     print(name, f":\t\t\t {logger['log'][name] / nbatch:.3e}")
 
-def index_mapping(batch_part_states, iAs, iBs, nλn):
-    if batch_part_states.ndim == 1:
-        batch_part_states = batch_part_states.reshape(1, -1)
-    if torch.is_tensor(batch_part_states):
-        part_states = batch_part_states.clone().to(device=device, dtype=torch.long)
-    else:
-        part_states = torch.tensor(batch_part_states, device=device, dtype=torch.long)
-
-    n_batch = part_states.shape[0]
-    p = (part_states == 1)[:, :, None].repeat(1, 1, 6).reshape(n_batch, -1)
-    p = p.T
-    A = (iAs.reshape(-1, 6)[:nλn, 0] // 6).type(torch.long)
-    B = (iBs.reshape(-1, 6)[:nλn, 0] // 6).type(torch.long)
-    pA = torch.index_select(part_states, 1, A)
-    pB = torch.index_select(part_states, 1, B)
-    flag0 = torch.logical_and(pA > 0, pB > 0)
-    flag1 = torch.logical_or(pA < 2, pB < 2)
-    c = torch.logical_and(flag0, flag1).T
-    return p, c
-
-def ipm_get_dynamic_attrib(ipm, batch_part_states):
-    reset_timer('dynamic_attrib')
-    nλn = ipm.nλn
-    nλt = ipm.nλt
-    Ccp = ipm.Ccp
-    nt = ipm.nt
-
-    ps, cs = index_mapping(batch_part_states, ipm.iAs, ipm.iBs, ipm.nλn)
-    ps, cs = ps.type(ipm.float_type), cs.type(ipm.float_type)
-
-    n_batch = batch_part_states.shape[0]
-    Pg = ps * ipm.g[:, None]
-
-    # invM
-    Pg = Pg.reshape(-1, 3, n_batch)
-    Pg = (ipm.invM @ Pg).reshape(-1, n_batch)
-
-    # KT
-    pA = torch.index_select(Pg, 0, ipm.iAs)
-    pB = torch.index_select(Pg, 0, ipm.iBs)
-    λ = ipm.nAs[:, None] * pA + ipm.nBs[:, None] * pB
-    λ = torch.sum(λ.reshape(-1, 6, n_batch), dim=1)
-    q = torch.vstack([λ, -Pg])
-
-    Al = torch.zeros((ipm.nλn, n_batch), dtype=ipm.float_type, device=device)
-    xl = torch.vstack([torch.zeros((nλn, n_batch), dtype=ipm.float_type, device=device),
-                    torch.zeros((nλt, n_batch), dtype=ipm.float_type, device=device),
-                    -Ccp * (1 - ps)])
-
-    xu = torch.vstack([Ccp * cs,
-                    torch.tile(Ccp * cs, (nt, 1)),
-                    Ccp * (1 - ps)])
-    end_timer('dynamic_attrib')
-
-    return q, xl, xu, Al, ps, cs
-
 def ipm_contacts(ipm, parts, contacts, density, boundary_part_ids):
     iAs = []
     iBs = []
     nAs = []
     nBs = []
+
+    device = ipm["device"]
+    float_type = ipm["float_type"]
     nt = ipm['nt']
+    ipm['nf'], ipm['nλn'], ipm['nλt'] = num_vars(parts, contacts, nt)
 
     # contacts
     for contact in contacts:
@@ -215,27 +164,94 @@ def ipm_contacts(ipm, parts, contacts, density, boundary_part_ids):
                         iAs.append(inds)
                         nAs.append(m)
                 t = -t
+
     iAs = np.hstack(iAs)
     iBs = np.hstack(iBs)
     nAs = np.hstack(nAs)
     nBs = np.hstack(nBs)
     ipm['iAs'] = torch.tensor(iAs, device=device, dtype=torch.long)
     ipm['iBs'] = torch.tensor(iBs, device=device, dtype=torch.long)
-    ipm['nAs'] = torch.tensor(nAs, device=device, dtype=ipm['float_type'])
-    ipm['nBs'] = torch.tensor(nBs, device=device, dtype=ipm['float_type'])
+    ipm['nAs'] = torch.tensor(nAs, device=device, dtype=float_type)
+    ipm['nBs'] = torch.tensor(nBs, device=device, dtype=float_type)
 
-    # invM
+    # mass and gravity
     volumes, moment_inertias = compute_volume_and_inertial(parts, density, boundary_part_ids)
     M = []
+    ipm['g'] = torch.zeros(ipm['nf'], device=device, dtype=float_type)
     for part_id, part in enumerate(parts):
+        # mass
         Mi = np.identity(3) * volumes[part_id] * density
         Ii = moment_inertias[part_id] * density
         M.append(np.linalg.inv(Mi))
         M.append(np.linalg.inv(Ii))
+
+        # gravity
+        ipm['g'][part_id * 6 + 2] = -volumes[part_id] * density
+
     M = np.stack(M)
     ipm['invM'] = torch.tensor(M, device=device, dtype=ipm['float_type'])
 
-def init_ipm(parts: list[Trimesh], contacts: list[dict], settings: dict):
+def index_mapping(batch_part_states, iAs, iBs, nλn, device):
+    if batch_part_states.ndim == 1:
+        batch_part_states = batch_part_states.reshape(1, -1)
+    if torch.is_tensor(batch_part_states):
+        part_states = batch_part_states.clone().to(device=device, dtype=torch.long)
+    else:
+        part_states = torch.tensor(batch_part_states, device=device, dtype=torch.long)
+
+    n_batch = part_states.shape[0]
+    p = (part_states == 1)[:, :, None].repeat(1, 1, 6).reshape(n_batch, -1)
+    p = p.T
+    A = (iAs.reshape(-1, 6)[:nλn, 0] // 6).type(torch.long)
+    B = (iBs.reshape(-1, 6)[:nλn, 0] // 6).type(torch.long)
+    pA = torch.index_select(part_states, 1, A)
+    pB = torch.index_select(part_states, 1, B)
+    flag0 = torch.logical_and(pA > 0, pB > 0)
+    flag1 = torch.logical_or(pA < 2, pB < 2)
+    c = torch.logical_and(flag0, flag1).T
+    return p, c
+
+def ipm_get_dynamic_attrib(ipm, batch_part_states):
+    reset_timer('dynamic_attrib')
+    nλn = ipm.nλn
+    nλt = ipm.nλt
+    Ccp = ipm.Ccp
+    nt = ipm.nt
+    device = ipm.device
+
+    ps, cs = index_mapping(batch_part_states, ipm.iAs, ipm.iBs, ipm.nλn, device = device)
+    ps, cs = ps.type(ipm.float_type), cs.type(ipm.float_type)
+
+    n_batch = batch_part_states.shape[0]
+    Pg = ps * ipm.g[:, None]
+
+    # invM
+    Pg = Pg.reshape(-1, 3, n_batch)
+    Pg = (ipm.invM @ Pg).reshape(-1, n_batch)
+
+    # KT
+    pA = torch.index_select(Pg, 0, ipm.iAs)
+    pB = torch.index_select(Pg, 0, ipm.iBs)
+    λ = ipm.nAs[:, None] * pA + ipm.nBs[:, None] * pB
+    λ = torch.sum(λ.reshape(-1, 6, n_batch), dim=1)
+    q = torch.vstack([λ, -Pg])
+
+    Al = torch.zeros((ipm.nλn, n_batch), dtype=ipm.float_type, device=device)
+    xl = torch.vstack([torch.zeros((nλn, n_batch), dtype=ipm.float_type, device=device),
+                    torch.zeros((nλt, n_batch), dtype=ipm.float_type, device=device),
+                    -Ccp * (1 - ps)])
+
+    xu = torch.vstack([Ccp * cs,
+                    torch.tile(Ccp * cs, (nt, 1)),
+                    Ccp * (1 - ps)])
+    end_timer('dynamic_attrib')
+
+    return q, xl, xu, Al, ps, cs
+
+def init_ipm(parts: list[Trimesh],
+             contacts: list[dict],
+             settings: dict):
+
     ipm = update_default_settings(settings,
                                   "ipm",
                                   {
@@ -247,9 +263,15 @@ def init_ipm(parts: list[Trimesh], contacts: list[dict], settings: dict):
                                       "kkt_conv_eps": 1E-5,
                                       "x_bound_tol": 1E-6,
                                       "float_type": torch.float32,
-                                      "sparsity_Q": 0.1,
-                                  })
+                                      "use_Q_fast": True,
+                                      "device" : torch.device("cuda" if torch.cuda.is_available() else "cpu")})
+
+    ipm = update_default_settings(settings,
+                                  "ipm",
+                                  settings["rbe"])
+    device = ipm["device"]
     float_type = ipm['float_type']
+
     rbe = settings['rbe']
     A = rbe["A"]
     L = rbe["L"]
@@ -272,30 +294,40 @@ def init_ipm(parts: list[Trimesh], contacts: list[dict], settings: dict):
     cholesky_H = torch.linalg.cholesky(H_tch)
     ipm['invH'] = torch.cholesky_inverse(cholesky_H).type(float_type)
 
-    # variables from rbe
-    ipm['velocity_tol'] = rbe['velocity_tol']
-    ipm['nλn'] = rbe['nλn']
-    ipm['nλt'] = rbe['nλt']
-    ipm['nf'] = rbe['nf']
-    ipm['nt'] = rbe['nt']
-    ipm['mu'] = rbe['mu']
-    ipm['Ccp'] = rbe['Ccp']
-    ipm['g'] = torch.tensor(rbe['g'], dtype=float_type, device=device)
+    ipm_contacts(ipm, parts, contacts, ipm['density'], settings['env']['boundary_part_ids'])
 
-    ipm_contacts(ipm, parts, contacts, rbe['density'], settings['env']['boundary_part_ids'])
+    if platform.system() == 'Windows':
+        disable_compile = True
+    else:
+        disable_compile = False
 
-    ipm['pre-computed'] = True
     if ipm['use_Q_fast']:
         torch.set_float32_matmul_precision('high')
-        ipm['Q_'] = torch.compile(Q_)
+        ipm['Q_'] = torch.compile(Q_, disable=disable_compile)
     else:
         ipm['Q_'] = lambda x, *kwargs: ipm['Q'] @ x
-
-    ipm['GT_'] = torch.compile(GT_)
-    ipm['G_'] = torch.compile(G_)
-    ipm['GTZSG_'] = torch.compile(GTZSG_)
+    ipm['GT_'] = torch.compile(GT_, disable=disable_compile)
+    ipm['G_'] = torch.compile(G_, disable=disable_compile)
+    ipm['GTZSG_'] = torch.compile(GTZSG_, disable=disable_compile)
     # ipm['ipm_solve_rhs'] = torch.compile(ipm_solve_rhs)
 
+    #
+    rbeG = ipm["nλn"], ipm["nt"], ipm["nf"], ipm["mu"]
+    rbeQ = ipm['nλn'], ipm['nt'], ipm['iAs'], ipm['iBs'], ipm['nAs'], ipm['nBs'], ipm['invM']
+    p = torch.eye(G.shape[1], device=device, dtype=ipm['float_type'])
+    G = ipm['G_'](p, *rbeG)
+    ipm['GG'] = G * G
+
+    p = torch.eye(Q.shape[0], device=device, dtype=ipm['float_type'])
+    ipm['Q'] = ipm['Q_'](p, *rbeQ)
+    ipm['diagQ'] = torch.diagonal(ipm['Q'])
+
+    #
+    H = GT_(G, *rbeG) + ipm['Q']
+    cholesky_H = torch.linalg.cholesky(H)
+    ipm['cholesky_H'] = cholesky_H
+
+    ipm['pre-computed'] = True
     settings['ipm'] = ipm
 
 def sum_forces(p, nλn, nt, iA, iB, nA, nB):
@@ -322,7 +354,9 @@ def ipm_evaluate_result(ipm, xclip, ps):
 
 def ipm_start_solve(ipm, h, q):
     rbe = ipm.nλn, ipm.nt, ipm.nf, ipm.mu
-    x = ipm.invH @ (ipm.GT_(h, *rbe) - q)
+    b = ipm.GT_(h, *rbe) - q
+    x = torch.cholesky_solve(b, ipm.cholesky_H)
+
     oldz = ipm.G_(x, *rbe) - h
     alpha_p = torch.max(oldz, 0).values
     flag = (alpha_p < 0).type(h.dtype).repeat(oldz.shape[0], 1)
@@ -350,6 +384,7 @@ def ipm_precond(ipm, s, z):
     return invM
 
 def ipm_linesearch(s, ds, z, dz, n_sample=32):
+    device = s.device
     alpha = torch.linspace(0, 1, n_sample, device=device, dtype=s.dtype)
     ls = s[None, :, :] + alpha[:, None, None] * ds[None, :, :]
     lz = z[None, :, :] + alpha[:, None, None] * dz[None, :, :]
@@ -369,6 +404,8 @@ def centering_params(s, z, ds_a, dz_a, n_sample):
     return sigma, mu
 
 def ipm_solve_rhs(ipm, s, z, invP, v1, v2, v3, n_iter, dx=None):
+    device = ipm.device
+
     rbeG = ipm.nλn, ipm.nt, ipm.nf, ipm.mu
     rbeQ = ipm.nλn, ipm.nt, ipm.iAs, ipm.iBs, ipm.nAs, ipm.nBs, ipm.invM
 
@@ -438,6 +475,7 @@ def simulate_ipm(batch_part_states: list[dict],
     reset_timer('ipm')
     ipm = SimpleNamespace(**settings["ipm"])
     floatType = ipm.float_type
+    device = ipm.device
 
     # update dynamic attributes
     q, xl, xu, Al, ps, cs = ipm_get_dynamic_attrib(ipm, batch_part_states)

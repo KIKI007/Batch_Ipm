@@ -9,12 +9,15 @@ import os
 from learn2assemble.render import *
 import polyscope as ps
 from torch.utils.data import DataLoader, TensorDataset
+from tqdm import tqdm
 
 curriculumn_folder = "/mnt/d/curriculum_Thingi10K_12/Thingi10K_12/"
 assembly_folder = "/mnt/d/assembly_Thingi10K_12/Thingi10K_12/"
 from os import listdir
 from os.path import isfile, join
 import learn2assemble
+
+result_table = []
 
 def test_instance(obj_id, sol_id, ipm=True):
     learn2assemble.simulator.logger = {
@@ -45,30 +48,42 @@ def test_instance(obj_id, sol_id, ipm=True):
         "use_Q_fast": True,
     }
 
-    n_batch = 2048
+    n_batch = 1024
 
     # load geometry
     foldername = os.path.join(assembly_folder, f"Thingi10K_12_{obj_id}/sol_{sol_id}")
     parts = load_assembly_from_files(foldername)
+
+    # compute contacts
+    if len(parts) > 80:
+        default_settings['rbe']['Ccp'] = 10
+        n_batch = 512
+
     contacts = compute_assembly_contacts(parts, default_settings)
     init_rbe(parts, contacts, default_settings)
     init_ipm(parts, contacts, default_settings)
     print("n_parts:\t", len(parts))
+
 
     # load curriculum
     filename = os.path.join(curriculumn_folder, f"Thingi10K_12_{obj_id}_sol_{sol_id}.pt")
     part_states = torch.load(filename)['input']
 
     # try best parameters
-    n_pcg_iter_1 = [50, 100, 150, 200, 250, 300, 350, 400]
+    n_pcg_iter_1s = [50, 100, 200, 300, 400, 500]
+    n_pcg_iter_2s = [50, 50, 100, 100, 200, 200]
     n_sample = 32
-    for attempt_iter in n_pcg_iter_1:
-        default_settings['ipm']['n_pcg_iter_1'] = attempt_iter
+    for n_pcg_iter_1, n_pcg_iter_2 in zip(n_pcg_iter_1s, n_pcg_iter_2s):
+        default_settings['ipm']['n_pcg_iter_1'] = n_pcg_iter_1
+        default_settings['ipm']['n_pcg_iter_2'] = n_pcg_iter_2
         v_fp32, stable_fp32 = simulate(parts, contacts, part_states[-n_sample:, :], default_settings)
         print("attempt success rate", np.sum(stable_fp32) / n_sample)
         if np.sum(stable_fp32) > n_sample * 0.9:
-            print("use n_pcg_iter_1 = ", attempt_iter)
+            print("use n_pcg_iter_1 = ", n_pcg_iter_1)
+            print("use n_pcg_iter_2 = ", n_pcg_iter_2)
             break
+
+
 
     inds = torch.sum(part_states, dim=1).cpu().numpy()
     inds = torch.tensor(np.argsort(inds).tolist())
@@ -82,15 +97,28 @@ def test_instance(obj_id, sol_id, ipm=True):
     )
 
     tot_success = 0
-    for part_states in dataloader:
+    for part_states in tqdm(dataloader):
         part_states = part_states[0]
         v_fp32, stable_fp32 = simulate(parts, contacts, part_states, default_settings)
         tot_success += np.sum(stable_fp32)
     print("success rate:\t", tot_success / inds.shape[0])
-    print_logger(['ipm', 'gurobi'])
+    print_logger(inds.shape[0], ['ipm', 'gurobi'])
     print("\n")
 
+    result_table.append({"name": obj_id,
+                         "sol_id": sol_id,
+                         "n_parts": len(parts),
+                         "n_states": inds.shape[0],
+                         "time": learn2assemble.simulator.logger['log']['ipm'],
+                         "acc": tot_success / inds.shape[0]}
+                        )
+
+    with open('result.json', 'w') as f:
+        json.dump(result_table, f, indent=4)
+
+
 sol_files = [f for f in listdir(curriculumn_folder) if isfile(join(curriculumn_folder, f))]
+sol_files.sort()
 for sol_file in sol_files:
     obj_id = sol_file.split('_')[2]
     sol_id = sol_file.split('_')[4].split('.')[0]

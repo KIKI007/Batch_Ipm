@@ -1,0 +1,18 @@
+1017 0
+n_parts:	 52
+attempt success rate 0.96875
+use n_pcg_iter_1 =  50
+use n_pcg_iter_2 =  50
+success rate:	 0.9732149870395098
+ipm :			 6.150e-03
+
+
+1026 0
+n_parts:	 92
+attempt success rate 0.0
+attempt success rate 0.09375
+attempt success rate 0.5
+attempt success rate 0.78125
+attempt success rate 0.96875
+use n_pcg_iter_1 =  400
+use n_pcg_iter_2 =  200
