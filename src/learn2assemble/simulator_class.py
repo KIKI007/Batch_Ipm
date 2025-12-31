@@ -226,6 +226,7 @@ class IpmSim(torch.nn.Module):
         self.ipm_settings = ipm_update_device(ipm_settings, device=ipm_settings['device'])
         for n, val in self.ipm_settings.items():
             if torch.is_tensor(val):
+                print(n)
                 self.register_buffer(n, tensor = self.ipm_settings[n], persistent=True)
 
     def GT_(self, p, nλn, nt, nf, mu):
