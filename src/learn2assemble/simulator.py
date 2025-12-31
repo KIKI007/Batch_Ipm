@@ -273,6 +273,7 @@ def ipm_get_dynamic_attrib(ipm, batch_part_states):
     nt = ipm.nt
     device = ipm.device
 
+    print(device)
     ps, cs = index_mapping(batch_part_states, ipm.iAs, ipm.iBs, ipm.nλn, device = device)
     ps, cs = ps.type(ipm.float_type), cs.type(ipm.float_type)
 
