@@ -705,8 +705,9 @@ if __name__ == '__main__':
     sim = torch.nn.DataParallel(sim)
 
     print("start simulation")
-    part_states = part_states.to(device = 'cuda:1')
-    v_fp32, stable_fp32 = sim(part_states)
+    part_states = part_states.to(device = 'cuda:0')
+    result = sim(part_states)
+    print(result)
     print_logger(stable_fp32.shape[0])
     #print_logger(part_states.shape[0])
     print(np.sum(stable_fp32) / stable_fp32.shape[0])
