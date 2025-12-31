@@ -589,7 +589,7 @@ class IpmSim(torch.nn.Module):
             else:
                 new_settings[n] = copy.deepcopy(val)
 
-        new_settings['Q_'] = self.Q
+        new_settings['Q_'] = self.Q_
 
         velocity, stable_flag = simulate_ipm(x, new_settings)
         return stable_flag
