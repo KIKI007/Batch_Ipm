@@ -629,7 +629,6 @@ class IpmSim(torch.nn.Module):
             if torch.is_tensor(val):
                 self.ipm_settings[n] = self.get_buffer(n)
                 self.ipm_settings['device'] = self.ipm_settings[n].device
-                print(self.ipm_settings[n].device)
         velocity, stable_flag = simulate_ipm(x, self.ipm_settings)
         return stable_flag
 
