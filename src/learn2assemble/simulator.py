@@ -86,7 +86,7 @@ def GTZSG_(p, ZS, nλn, nt, nf, mu):
     λ3 = ZSGp[nλn + nx:]
     return λ3 - λ2 + λ0
 
-def Q_(p, nλn, nt, iA, iB, nA, nB, invM):
+def Q_(p, nλn, nt, iA, iB, nA, nB, invM, Q):
     batch = p.shape[1]
     nλt = nλn * nt
     λ, f = p[: nλn + nλt, :], -p[nλn + nλt:, :]
@@ -225,7 +225,7 @@ def init_ipm(parts: list[Trimesh],
     # compute pre-conditioner
     nx = ipm['nλn'] * (ipm["nt"] + 1) + ipm["nf"]
     rbeG = ipm["nλn"], ipm["nt"], ipm["nf"], ipm["mu"]
-    rbeQ = ipm['nλn'], ipm['nt'], ipm['iAs'], ipm['iBs'], ipm['nAs'], ipm['nBs'], ipm['invM']
+    rbeQ = ipm['nλn'], ipm['nt'], ipm['iAs'], ipm['iBs'], ipm['nAs'], ipm['nBs'], ipm['invM'], None
     p = torch.eye(nx, device=device, dtype=float_type)
     G = ipm['G_'](p, *rbeG)
     ipm['GG'] = G * G
@@ -234,7 +234,7 @@ def init_ipm(parts: list[Trimesh],
 
     # cannot compile just use Q directly
     if disable_compile:
-        ipm['Q_'] = lambda x, *args: ipm['Q'] @ x
+        ipm['Q_'] = lambda x, *args: args[-1] @ x
     else:
         torch.set_float32_matmul_precision('high')
 
@@ -316,8 +316,8 @@ def sum_forces(p, nλn, nt, iA, iB, nA, nB):
 
 def ipm_evaluate_result(ipm, xclip, ps):
     batch = xclip.shape[1]
-    rbeQ = ipm.nλn, ipm.nt, ipm.iAs, ipm.iBs, ipm.nAs, ipm.nBs
-    residual = (sum_forces(xclip, *rbeQ) + ipm.g[:, None]) * ps
+    rbe = ipm.nλn, ipm.nt, ipm.iAs, ipm.iBs, ipm.nAs, ipm.nBs
+    residual = (sum_forces(xclip, *rbe) + ipm.g[:, None]) * ps
     residual = residual.reshape(-1, 3, batch)
     velocity = (ipm.invM @ residual).reshape(-1, batch)
     velocity_inf_nrm = inf_norm(velocity)
@@ -340,7 +340,7 @@ def ipm_start_solve(ipm, h, q):
 
 def ipm_kkt_res(ipm, q, h, x, s, z):
     rbe = ipm.nλn, ipm.nt, ipm.nf, ipm.mu
-    rbeQ = ipm.nλn, ipm.nt, ipm.iAs, ipm.iBs, ipm.nAs, ipm.nBs, ipm.invM
+    rbeQ = ipm.nλn, ipm.nt, ipm.iAs, ipm.iBs, ipm.nAs, ipm.nBs, ipm.invM, ipm.Q
     r1 = ipm.Q_(x, *rbeQ) + q + ipm.GT_(z, *rbe)
     r2 = s * z
     r3 = G_(x, *rbe) + s - h
@@ -378,7 +378,7 @@ def ipm_solve_rhs(ipm, s, z, invP, v1, v2, v3, n_iter, dx=None):
     device = ipm.device
 
     rbeG = ipm.nλn, ipm.nt, ipm.nf, ipm.mu
-    rbeQ = ipm.nλn, ipm.nt, ipm.iAs, ipm.iBs, ipm.nAs, ipm.nBs, ipm.invM
+    rbeQ = ipm.nλn, ipm.nt, ipm.iAs, ipm.iBs, ipm.nAs, ipm.nBs, ipm.invM, ipm.Q
 
     ZS = z / s
     b = ipm.GT_((z * v3 - v2) / s, *rbeG) + v1
