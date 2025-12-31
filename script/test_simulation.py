@@ -69,20 +69,6 @@ def test_instance(obj_id, sol_id, ipm=True):
     filename = os.path.join(curriculumn_folder, f"Thingi10K_12_{obj_id}_sol_{sol_id}.pt")
     part_states = torch.load(filename)['input']
 
-    # try best parameters
-    n_pcg_iter_1s = [50, 100, 200, 300, 400, 500]
-    n_pcg_iter_2s = [50, 50, 100, 100, 200, 200]
-    n_sample = 32
-    for n_pcg_iter_1, n_pcg_iter_2 in zip(n_pcg_iter_1s, n_pcg_iter_2s):
-        default_settings['ipm']['n_pcg_iter_1'] = n_pcg_iter_1
-        default_settings['ipm']['n_pcg_iter_2'] = n_pcg_iter_2
-        v_fp32, stable_fp32 = simulate(parts, contacts, part_states[-n_sample:, :], default_settings)
-        print("attempt success rate", np.sum(stable_fp32) / n_sample)
-        if np.sum(stable_fp32) > n_sample * 0.9:
-            print("use n_pcg_iter_1 = ", n_pcg_iter_1)
-            print("use n_pcg_iter_2 = ", n_pcg_iter_2)
-            break
-
 
 
     inds = torch.sum(part_states, dim=1).cpu().numpy()

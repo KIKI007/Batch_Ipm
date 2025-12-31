@@ -18,13 +18,6 @@ logger = {
     'activate': True,
 }
 
-def from_scipy_to_torch_sparse(A: sp.sparse.coo_matrix,
-                               floatType=torch.float32):
-    return torch.sparse_coo_tensor(torch.LongTensor(np.vstack((A.row, A.col))),
-                                   torch.tensor(A.data, dtype=floatType),
-                                   torch.Size(A.shape)).to(device)
-
-
 def inf_norm(x):
     return torch.max(torch.abs(x), dim=0).values
 
@@ -191,6 +184,68 @@ def ipm_contacts(ipm, parts, contacts, density, boundary_part_ids):
     M = np.stack(M)
     ipm['invM'] = torch.tensor(M, device=device, dtype=ipm['float_type'])
 
+def init_ipm(parts: list[Trimesh],
+             contacts: list[dict],
+             settings: dict):
+
+    ipm = update_default_settings(settings,
+                                  "ipm",
+                                  {
+                                      "n_iter": 30,
+                                      "n_pcg_iter_1": 100,
+                                      "n_pcg_iter_2": 50,
+                                      "n_pcg_eval_iter": 20,
+                                      "n_linesearch": 32,
+                                      "kkt_conv_eps": 1E-5,
+                                      "x_bound_tol": 1E-6,
+                                      "float_type": torch.float32,
+                                      "use_Q_fast": True,
+                                      "device" : torch.device("cuda" if torch.cuda.is_available() else "cpu")})
+
+    ipm = update_default_settings(settings,
+                                  "ipm",
+                                  settings["rbe"])
+    device = ipm["device"]
+    float_type = ipm['float_type']
+
+    ipm['n_part'] = len(parts)
+    ipm['boundary_part_ids'] = settings['env']['boundary_part_ids']
+    ipm['density'] = compute_best_density(parts)
+    ipm_contacts(ipm, parts, contacts, ipm['density'], ipm['boundary_part_ids'])
+
+    if platform.system() == 'Windows':
+        disable_compile = True
+    else:
+        disable_compile = False
+
+    if ipm['use_Q_fast']:
+        torch.set_float32_matmul_precision('high')
+        ipm['Q_'] = torch.compile(Q_, disable=disable_compile)
+    else:
+        ipm['Q_'] = lambda x, *kwargs: ipm['Q'] @ x
+    ipm['GT_'] = torch.compile(GT_, disable=disable_compile)
+    ipm['G_'] = torch.compile(G_, disable=disable_compile)
+    ipm['GTZSG_'] = torch.compile(GTZSG_, disable=disable_compile)
+    # ipm['ipm_solve_rhs'] = torch.compile(ipm_solve_rhs)
+
+    #
+    nx = ipm['nλn'] * (ipm["nt"] + 1) + ipm["nf"]
+    rbeG = ipm["nλn"], ipm["nt"], ipm["nf"], ipm["mu"]
+    rbeQ = ipm['nλn'], ipm['nt'], ipm['iAs'], ipm['iBs'], ipm['nAs'], ipm['nBs'], ipm['invM']
+    p = torch.eye(nx, device=device, dtype=float_type)
+    G = ipm['G_'](p, *rbeG)
+    ipm['GG'] = G * G
+    ipm['Q'] = ipm['Q_'](p, *rbeQ)
+    ipm['diagQ'] = torch.diagonal(ipm['Q'])
+
+    #
+    H = GT_(G, *rbeG) + ipm['Q']
+    cholesky_H = torch.linalg.cholesky(H)
+    ipm['cholesky_H'] = cholesky_H
+
+    ipm['pre-computed'] = True
+    settings['ipm'] = ipm
+
 def index_mapping(batch_part_states, iAs, iBs, nλn, device):
     if batch_part_states.ndim == 1:
         batch_part_states = batch_part_states.reshape(1, -1)
@@ -212,7 +267,7 @@ def index_mapping(batch_part_states, iAs, iBs, nλn, device):
     return p, c
 
 def ipm_get_dynamic_attrib(ipm, batch_part_states):
-    reset_timer('dynamic_attrib')
+
     nλn = ipm.nλn
     nλt = ipm.nλt
     Ccp = ipm.Ccp
@@ -244,91 +299,8 @@ def ipm_get_dynamic_attrib(ipm, batch_part_states):
     xu = torch.vstack([Ccp * cs,
                     torch.tile(Ccp * cs, (nt, 1)),
                     Ccp * (1 - ps)])
-    end_timer('dynamic_attrib')
 
     return q, xl, xu, Al, ps, cs
-
-def init_ipm(parts: list[Trimesh],
-             contacts: list[dict],
-             settings: dict):
-
-    ipm = update_default_settings(settings,
-                                  "ipm",
-                                  {
-                                      "n_iter": 30,
-                                      "n_pcg_iter_1": 100,
-                                      "n_pcg_iter_2": 50,
-                                      "n_pcg_eval_iter": 20,
-                                      "n_linesearch": 32,
-                                      "kkt_conv_eps": 1E-5,
-                                      "x_bound_tol": 1E-6,
-                                      "float_type": torch.float32,
-                                      "use_Q_fast": True,
-                                      "device" : torch.device("cuda" if torch.cuda.is_available() else "cpu")})
-
-    ipm = update_default_settings(settings,
-                                  "ipm",
-                                  settings["rbe"])
-    device = ipm["device"]
-    float_type = ipm['float_type']
-
-    rbe = settings['rbe']
-    A = rbe["A"]
-    L = rbe["L"]
-    Q = L.T @ L
-
-    nx = A.shape[1]
-    Inx = sp.sparse.coo_matrix(sp.sparse.eye_array(nx, dtype=np.float64))
-
-    G = sp.sparse.block_array([[-A],
-                               [-Inx],
-                               [Inx]])
-    GG = G * G
-
-    ipm['Q'] = torch.tensor(Q.todense(), dtype=float_type, device=device)
-    ipm['diagQ'] = torch.tensor(np.diagonal(Q.todense()), dtype=float_type, device=device)
-    ipm['GG'] = torch.tensor(GG.todense(), dtype=float_type, device=device)
-
-    H = Q + G.T @ G
-    H_tch = torch.tensor(H.todense(), dtype=torch.float64, device=device)
-    cholesky_H = torch.linalg.cholesky(H_tch)
-    ipm['invH'] = torch.cholesky_inverse(cholesky_H).type(float_type)
-
-    ipm_contacts(ipm, parts, contacts, ipm['density'], settings['env']['boundary_part_ids'])
-
-    if platform.system() == 'Windows':
-        disable_compile = True
-    else:
-        disable_compile = False
-
-    if ipm['use_Q_fast']:
-        torch.set_float32_matmul_precision('high')
-        ipm['Q_'] = torch.compile(Q_, disable=disable_compile)
-    else:
-        ipm['Q_'] = lambda x, *kwargs: ipm['Q'] @ x
-    ipm['GT_'] = torch.compile(GT_, disable=disable_compile)
-    ipm['G_'] = torch.compile(G_, disable=disable_compile)
-    ipm['GTZSG_'] = torch.compile(GTZSG_, disable=disable_compile)
-    # ipm['ipm_solve_rhs'] = torch.compile(ipm_solve_rhs)
-
-    #
-    rbeG = ipm["nλn"], ipm["nt"], ipm["nf"], ipm["mu"]
-    rbeQ = ipm['nλn'], ipm['nt'], ipm['iAs'], ipm['iBs'], ipm['nAs'], ipm['nBs'], ipm['invM']
-    p = torch.eye(G.shape[1], device=device, dtype=ipm['float_type'])
-    G = ipm['G_'](p, *rbeG)
-    ipm['GG'] = G * G
-
-    p = torch.eye(Q.shape[0], device=device, dtype=ipm['float_type'])
-    ipm['Q'] = ipm['Q_'](p, *rbeQ)
-    ipm['diagQ'] = torch.diagonal(ipm['Q'])
-
-    #
-    H = GT_(G, *rbeG) + ipm['Q']
-    cholesky_H = torch.linalg.cholesky(H)
-    ipm['cholesky_H'] = cholesky_H
-
-    ipm['pre-computed'] = True
-    settings['ipm'] = ipm
 
 def sum_forces(p, nλn, nt, iA, iB, nA, nB):
     batch = p.shape[1]
@@ -471,6 +443,7 @@ def get_dynamic_attrib(batch_part_states, rbe, float_type):
 
 def simulate_ipm(batch_part_states: list[dict],
                  settings: dict):
+
     # name space
     reset_timer('ipm')
     ipm = SimpleNamespace(**settings["ipm"])
@@ -478,16 +451,20 @@ def simulate_ipm(batch_part_states: list[dict],
     device = ipm.device
 
     # update dynamic attributes
+    reset_timer('dynamic_attrib')
     q, xl, xu, Al, ps, cs = ipm_get_dynamic_attrib(ipm, batch_part_states)
     xl, xu = xl - ipm.x_bound_tol, xu + ipm.x_bound_tol
     h = torch.vstack([-Al, -xl, xu])
+    end_timer('dynamic_attrib')
 
     # initialize ipm x0
+    reset_timer('start_solve')
     x, s, z = ipm_start_solve(ipm, h, q)
     result_x = torch.zeros_like(x)
     inds = torch.arange(s.shape[1], dtype=torch.long, device=device)
     kkt_res_best = torch.ones(batch_part_states.shape[0], device=device, dtype=floatType) * torch.inf
     r1, r2, r3, kkt_res = ipm_kkt_res(ipm, q, h, x, s, z)
+    end_timer('start_solve')
 
     # ipm main loop
     for it in range(ipm.n_iter):
@@ -553,6 +530,43 @@ def simulate_ipm(batch_part_states: list[dict],
     end_timer('ipm')
     return velocity.cpu().numpy(), (velocity_inf_nrm < ipm.velocity_tol).cpu().numpy()
 
+def ipm_search_best_parameters(part_states, tol, settings: dict):
+    # decide Ccp
+    complete_states = torch.ones((1, settings["ipm"]["n_part"]), dtype=torch.long)
+    complete_states[:, settings["ipm"]["boundary_part_ids"]] = 2
+    for Ccp in [5, 10, 50, 100]:
+        settings['ipm']['n_pcg_iter_1'] = 400
+        settings['ipm']['n_pcg_iter_2'] = 200
+        settings["ipm"]["Ccp"] = Ccp
+        _, stable_fp32 = simulate_ipm(complete_states, settings)
+        if stable_fp32.any():
+            print("density = ", settings["ipm"]["density"])
+            print("Ccp = ", settings["ipm"]["Ccp"])
+            break
+    else:
+        print("no solution found for Ccp")
+        return False
+
+    # decide pcg_iter 1/2
+    n_pcg_iter_1s = [50, 100, 200, 300, 400, 500]
+    n_pcg_iter_2s = [50, 50, 100, 100, 200, 200]
+    for n_pcg_iter_1, n_pcg_iter_2 in zip(n_pcg_iter_1s, n_pcg_iter_2s):
+        settings['ipm']['n_pcg_iter_1'] = n_pcg_iter_1
+        settings['ipm']['n_pcg_iter_2'] = n_pcg_iter_2
+        _, stable_fp32 = simulate_ipm(part_states, settings)
+        rate = np.sum(stable_fp32) / stable_fp32.shape[0]
+        if rate > tol:
+            print("n_pcg_iter_1 = ", settings["ipm"]["n_pcg_iter_1"])
+            print("n_pcg_iter_2 = ", settings["ipm"]["n_pcg_iter_2"])
+            break
+        #else:
+            #print("success rate", rate)
+    else:
+        print("no solution found for pcg iter 1/2")
+        return False
+
+    return True
+
 def init_gurobi(parts, contacts, settings: dict):
     params = {
         "WLSACCESSID": "9d6cfee4-4a06-46b1-a7c8-a7445b4e62a6",
@@ -567,7 +581,6 @@ def init_gurobi(parts, contacts, settings: dict):
         "env": env,
         "pre-computed": True
     }
-
 
 def simulate_gurobi(batch_part_states: list[dict],
                     settings: dict):
@@ -621,10 +634,10 @@ def simulate(parts: list[Trimesh],
              batch_part_states: list[dict],
              settings: dict):
     rbe_pre_computed = settings.get("rbe", {"pre-computed": False}).get("pre-computed", False)
-    if not rbe_pre_computed:
-        init_rbe(parts, contacts, settings)
 
     if "gurobi" in settings:
+        if not rbe_pre_computed:
+            init_rbe(parts, contacts, settings)
         gurobi_pre_computed = settings["gurobi"].get("pre-computed", False)
         if not gurobi_pre_computed:
             init_gurobi(parts, contacts, settings)
@@ -642,15 +655,15 @@ if __name__ == '__main__':
     import os
 
     # test
-    default_settings['rbe']['density'] = 1000
+
     default_settings['rbe']['mu'] = 0.5
-    default_settings['rbe']['Ccp'] = 500
     default_settings["assembly"]["contact_shrink_ratio"] = 0.0  # for robustnessly computing the contact surfaces
 
     n_batch = 512
     torch.manual_seed(0)
     name = "dome"
     parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + f"/{name}")
+    default_settings['env']['boundary_part_ids'] = [len(parts) - 1]
 
     filename = os.path.join(RESOURCE_DIR, f"curriculum/{name}.pt")
     part_states = torch.load(filename)['input']
@@ -676,16 +689,23 @@ if __name__ == '__main__':
         "float_type": torch.float32,
         "use_Q_fast": True,
     }
+    reset_timer('contact')
     contacts = compute_assembly_contacts(parts, default_settings)
-    init_rbe(parts, contacts, default_settings)
+    end_timer('contact')
+
+    reset_timer('init ipm')
     init_ipm(parts, contacts, default_settings)
-    ipm = SimpleNamespace(**default_settings["ipm"])
+    end_timer('init ipm')
+
+    reset_timer('search parameter')
+    ipm_search_best_parameters(part_states[:32, ], tol = 0.8,  settings = default_settings)
+    end_timer('search parameter')
 
     print("start simulation")
     v_fp32, stable_fp32 = simulate(parts, contacts, part_states, default_settings)
     print_logger(1)
     #print_logger(part_states.shape[0])
-    print(np.sum(stable_fp32) / n_batch)
+    print(np.sum(stable_fp32) / stable_fp32.shape[0])
 
     # render
     # import polyscope as ps

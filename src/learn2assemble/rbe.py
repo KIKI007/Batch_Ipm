@@ -86,15 +86,21 @@ def compute_volume_and_inertial(parts: list[Trimesh],
     volumes = [0 for part in parts]
     moment_inertias = [None for part in parts]
     for part_id, part in enumerate(parts):
-        if part_id in boundary_part_ids:
-            volumes[part_id] = 1.0 / density
-            moment_inertias[part_id] = np.eye(3) / density
-        else:
-            volumes[part_id] = part.volume
-            moment_inertias[part_id] = part.moment_inertia
+        # if part_id in boundary_part_ids:
+        #     volumes[part_id] = 1.0 / density
+        #     moment_inertias[part_id] = np.eye(3) / density
+        # else:
+        volumes[part_id] = part.volume
+        moment_inertias[part_id] = part.moment_inertia
 
     return volumes, moment_inertias
 
+def compute_best_density(parts: list[Trimesh]):
+    avg_volume = 0
+    for part_id, part in enumerate(parts):
+        avg_volume += part.volume
+    avg_volume /= len(parts)
+    return 1.0 / avg_volume
 
 def compute_generalized_mass(parts,
                              density: float = 1.0,
