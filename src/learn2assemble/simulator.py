@@ -543,7 +543,7 @@ def simulate_ipm(batch_part_states: list[dict], ipm_settings):
     xclip = torch.clip(result_x, xl, xu)
     velocity, velocity_inf_nrm = ipm_evaluate_result(ipm, xclip, ps)
     end_timer('ipm')
-    return velocity.cpu().numpy(), (velocity_inf_nrm < ipm.velocity_tol).cpu().numpy()
+    return velocity, (velocity_inf_nrm < ipm.velocity_tol)
 
 def ipm_auto_parameters(settings: dict):
     # decide Ccp
