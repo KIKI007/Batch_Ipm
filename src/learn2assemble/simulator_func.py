@@ -693,7 +693,7 @@ if __name__ == '__main__':
     ipm_auto_parameters(settings = default_settings)
     end_timer('auto parameter')
 
-    sim = IpmSim(default_settings["ipm"])
+    sim = IpmSim(default_settings["ipm"]).cuda()
     parallel_sim = torch.nn.DataParallel(sim)
 
     torch.cuda.synchronize()
