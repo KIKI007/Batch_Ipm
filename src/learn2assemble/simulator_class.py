@@ -557,9 +557,9 @@ class IpmSim(torch.nn.Module):
         velocity, velocity_inf_nrm = self.ipm_evaluate_result(ipm, xclip, ps)
         return velocity, (velocity_inf_nrm < ipm.velocity_tol)
 
-    @torch.no_grad()
     def forward(self, x):
         new_settings = {}
+        print(self._buffers)
         for n, val in self.ipm_settings.items():
             if torch.is_tensor(val):
                 new_settings[n] = self.get_buffer(n)
