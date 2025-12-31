@@ -216,7 +216,7 @@ def init_ipm(parts: list[Trimesh],
         disable_compile = False
 
     # compile function
-    torch.set_float32_matmul_precision('high')
+
     ipm['Q_'] = torch.compile(Q_, disable=disable_compile)
     ipm['GT_'] = torch.compile(GT_, disable=disable_compile)
     ipm['G_'] = torch.compile(G_, disable=disable_compile)
@@ -232,7 +232,12 @@ def init_ipm(parts: list[Trimesh],
     ipm['Q'] = ipm['Q_'](p, *rbeQ)
     ipm['diagQ'] = torch.diagonal(ipm['Q'])
 
-    #
+    # cannot compile just use Q directly
+    if disable_compile:
+        ipm['Q_'] = lambda x, *args: ipm['Q'] @ x
+    else:
+        torch.set_float32_matmul_precision('high')
+
     H = ipm['GT_'](G, *rbeG) + ipm['Q']
     cholesky_H = torch.linalg.cholesky(H)
     ipm['cholesky_H'] = cholesky_H
@@ -619,7 +624,6 @@ class IpmSim(torch.nn.Module):
 
     @torch.no_grad()
     def forward(self, x):
-        print(x.shape[0])
         for n, val in self.ipm_settings.items():
             if torch.is_tensor(val):
                 self.ipm_settings[n] = self.get_buffer(n)
