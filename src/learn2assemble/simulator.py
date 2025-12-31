@@ -561,24 +561,6 @@ class IpmSim(torch.nn.Module):
             if torch.is_tensor(val):
                 self.register_buffer(n, tensor = self.ipm_settings[n], persistent=False)
 
-    @torch.compile
-    def Q_(self, p, nλn, nt, iA, iB, nA, nB, invM, Q):
-        batch = p.shape[1]
-        nλt = nλn * nt
-        λ, f = p[: nλn + nλt, :], -p[nλn + nλt:, :]
-        λ = λ[:, None, :].repeat(1, 6, 1).reshape(-1, batch)
-        xA = λ * nA[:, None]
-        xB = λ * nB[:, None]
-        f.index_add_(0, iA, xA)
-        f.index_add_(0, iB, xB)
-        f = f.reshape(-1, 3, batch)
-        x = (invM @ f).reshape(-1, batch)
-        pA = torch.index_select(x, 0, iA)
-        pB = torch.index_select(x, 0, iB)
-        λ = nA[:, None] * pA + nB[:, None] * pB
-        λ = torch.sum(λ.reshape(-1, 6, batch), dim=1)
-        return torch.vstack([λ, -x])
-
     @torch.no_grad()
     def forward(self, x):
         new_settings = {}
@@ -588,9 +570,6 @@ class IpmSim(torch.nn.Module):
                 new_settings['device'] = new_settings[n].device
             else:
                 new_settings[n] = copy.deepcopy(val)
-
-        new_settings['Q_'] = self.Q_
-
         velocity, stable_flag = simulate_ipm(x, new_settings)
         return stable_flag
 
