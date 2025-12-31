@@ -627,6 +627,7 @@ class IpmSim(torch.nn.Module):
 
     @torch.no_grad()
     def forward(self, x):
+        print(x.shape[0])
         for n, val in self.ipm_settings.items():
             if torch.is_tensor(val):
                 self.ipm_settings[n] = self.get_buffer(n)
