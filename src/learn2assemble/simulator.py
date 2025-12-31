@@ -21,6 +21,33 @@ logger = {
 def inf_norm(x):
     return torch.max(torch.abs(x), dim=0).values
 
+def reset_timer(name):
+    if logger['activate']:
+        torch.cuda.synchronize()
+        if name not in logger['timer']:
+            logger['timer'][name] = perf_counter()
+            logger['log'][name] = 0.0
+        else:
+            logger['timer'][name] = perf_counter()
+
+def end_timer(name):
+    if logger['activate']:
+        torch.cuda.synchronize()
+        if 'log' not in logger:
+            logger['log'] = {}
+        if name in logger['timer']:
+            logger['log'][name] += perf_counter() - logger['timer'][name]
+
+def print_logger(nbatch = 1.0, names = []):
+    if logger['activate']:
+        if len(names) == 0:
+            for name, value in logger['log'].items():
+                print(name, f":\t\t\t {value / nbatch:.3e}")
+        else:
+            for name in names:
+                if name in logger['log']:
+                    print(name, f":\t\t\t {logger['log'][name] / nbatch:.3e}")
+
 def GT_(p, nλn, nt, nf, mu):
     nλt = nλn * nt
     nx = nλn + nλt + nf
@@ -80,33 +107,6 @@ def Q_(p, nλn, nt, iA, iB, nA, nB, invM):
     λ = nA[:, None] * pA + nB[:, None] * pB
     λ = torch.sum(λ.reshape(-1, 6, batch), dim=1)
     return torch.vstack([λ, -x])
-
-def reset_timer(name):
-    if logger['activate']:
-        torch.cuda.synchronize()
-        if name not in logger['timer']:
-            logger['timer'][name] = perf_counter()
-            logger['log'][name] = 0.0
-        else:
-            logger['timer'][name] = perf_counter()
-
-def end_timer(name):
-    if logger['activate']:
-        torch.cuda.synchronize()
-        if 'log' not in logger:
-            logger['log'] = {}
-        if name in logger['timer']:
-            logger['log'][name] += perf_counter() - logger['timer'][name]
-
-def print_logger(nbatch = 1.0, names = []):
-    if logger['activate']:
-        if len(names) == 0:
-            for name, value in logger['log'].items():
-                print(name, f":\t\t\t {value / nbatch:.3e}")
-        else:
-            for name in names:
-                if name in logger['log']:
-                    print(name, f":\t\t\t {logger['log'][name] / nbatch:.3e}")
 
 def ipm_contacts(ipm, parts, contacts, density, boundary_part_ids):
     iAs = []
@@ -220,14 +220,14 @@ def init_ipm(parts: list[Trimesh],
     else:
         disable_compile = False
 
-    if ipm['use_Q_fast']:
-        torch.set_float32_matmul_precision('high')
-        ipm['Q_'] = torch.compile(Q_, disable=disable_compile)
-    else:
-        ipm['Q_'] = lambda x, *kwargs: ipm['Q'] @ x
+    disable_compile = True
+    torch.set_float32_matmul_precision('high')
+    ipm['Q_'] = torch.compile(Q_, disable=disable_compile)
     ipm['GT_'] = torch.compile(GT_, disable=disable_compile)
     ipm['G_'] = torch.compile(G_, disable=disable_compile)
     ipm['GTZSG_'] = torch.compile(GTZSG_, disable=disable_compile)
+
+    #ipm['Q_'] = lambda x, *kwargs: ipm['Q'] @ x
     # ipm['ipm_solve_rhs'] = torch.compile(ipm_solve_rhs)
 
     #
@@ -627,13 +627,10 @@ class IpmSim(torch.nn.Module):
 
     @torch.no_grad()
     def forward(self, x):
-        print('start')
         for n, val in self.ipm_settings.items():
             if torch.is_tensor(val):
                 self.ipm_settings[n] = self.get_buffer(n)
                 self.ipm_settings['device'] = self.ipm_settings[n].device
-                #print(self.ipm_settings[n].device)
-        print(x.device)
         return simulate_ipm(x, self.ipm_settings)
 
 def simulate(parts: list[Trimesh],
