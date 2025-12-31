@@ -632,7 +632,7 @@ if __name__ == '__main__':
     sim = IpmSim(default_settings["ipm"])
     if platform.system() == "Linux":
         sim = torch.compile(sim)
-    parallel_sim = torch.nn.DataParallel(sim)
+    parallel_sim = torch.nn.DataParallel(sim, [0, 1])
 
     torch.cuda.synchronize()
     timer = perf_counter()
