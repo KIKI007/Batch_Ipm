@@ -552,6 +552,27 @@ def ipm_auto_parameters(settings: dict):
     print("num pcg iter = ", settings["ipm"]["n_pcg_iter"])
     return True
 
+# for parallel gpus
+class IpmSim(torch.nn.Module):
+    def __init__(self, ipm_settings):
+        super().__init__()
+        self.ipm_settings = ipm_update_device(ipm_settings, device=ipm_settings['device'])
+        for n, val in self.ipm_settings.items():
+            if torch.is_tensor(val):
+                self.register_buffer(n, tensor = self.ipm_settings[n], persistent=False)
+
+    @torch.no_grad()
+    def forward(self, x):
+        new_settings = {}
+        for n, val in self.ipm_settings.items():
+            if torch.is_tensor(val):
+                new_settings[n] = self.get_buffer(n)
+                new_settings['device'] = new_settings[n].device
+            else:
+                new_settings[n] = copy.deepcopy(val)
+        velocity, stable_flag = simulate_ipm(x, new_settings)
+        return stable_flag
+
 def init_gurobi(parts, contacts, settings: dict):
     params = {
         "WLSACCESSID": "9d6cfee4-4a06-46b1-a7c8-a7445b4e62a6",
@@ -613,24 +634,6 @@ def simulate_gurobi(batch_part_states: list[dict],
     vs = vs.T
     end_timer('gurobi')
     return vs, np.array(flags)
-
-# for parallel gpus
-class IpmSim(torch.nn.Module):
-    def __init__(self, ipm_settings):
-        super().__init__()
-        self.ipm_settings = ipm_update_device(ipm_settings, device=ipm_settings['device'])
-        for n, val in self.ipm_settings.items():
-            if torch.is_tensor(val):
-                self.register_buffer(n, tensor = self.ipm_settings[n], persistent=False)
-
-    @torch.no_grad()
-    def forward(self, x):
-        for n, val in self.ipm_settings.items():
-            if torch.is_tensor(val):
-                self.ipm_settings[n] = self.get_buffer(n)
-                self.ipm_settings['device'] = self.ipm_settings[n].device
-        velocity, stable_flag = simulate_ipm(x, self.ipm_settings)
-        return stable_flag
 
 def simulate(parts: list[Trimesh],
              contacts: list[dict],
