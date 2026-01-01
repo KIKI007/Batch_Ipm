@@ -399,6 +399,7 @@ def ipm_linesearch(s, ds, z, dz, n_sample=32):
     ind = torch.max(inds, dim=0).values.to(torch.long)
     return alpha[ind]
 
+@torch.compile(disable=disable_compile)
 def ipm_centering_params(s, z, ds_a, dz_a, n_sample):
     """duality gap + cc term in predictor-corrector PDIP"""
     sz = torch.sum(s * z, dim=0)
