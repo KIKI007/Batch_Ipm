@@ -101,7 +101,7 @@ def GTZSG_(p, ZS, nλn, nt, nf, mu):
     λ3 = ZSGp[nλn + nx:]
     return λ3 - λ2 + λ0
 
-@torch.compile(disable=disable_compile):
+@torch.compile(disable=disable_compile)
 def Q_(p, nλn, nt, iA, iB, nA, nB, invM, Q):
     batch = p.shape[1]
     nλt = nλn * nt
