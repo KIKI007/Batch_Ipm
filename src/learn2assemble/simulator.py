@@ -53,7 +53,7 @@ def print_logger(nbatch=1.0, names=[]):
                     print(name, f":\t\t\t {logger['log'][name] / nbatch:.3e}")
 
 
-#@torch.compile(disable=disable_compile)
+@torch.compile(disable=disable_compile)
 def GT_(p, nλn, nt, nf, mu):
     nλt = nλn * nt
     nx = nλn + nλt + nf
@@ -65,7 +65,7 @@ def GT_(p, nλn, nt, nf, mu):
     return λ3 - λ2 + λ0
 
 
-#@torch.compile(disable=disable_compile)
+@torch.compile(disable=disable_compile)
 def G_(p, nλn, nt, nf, mu):
     nλt = nλn * nt
     λn, λt = p[:nλn, :], p[nλn: nλn + nλt, :]
@@ -76,7 +76,7 @@ def G_(p, nλn, nt, nf, mu):
     return torch.vstack([-λn, -p, p])
 
 
-#@torch.compile(disable=disable_compile)
+@torch.compile(disable=disable_compile)
 def GTZSG_(p, ZS, nλn, nt, nf, mu):
     nbatch = p.shape[1]
     nλt = nλn * nt
@@ -101,8 +101,7 @@ def GTZSG_(p, ZS, nλn, nt, nf, mu):
     λ3 = ZSGp[nλn + nx:]
     return λ3 - λ2 + λ0
 
-
-@torch.compile(disable=disable_compile, dynamic=False)
+@torch.compile(disable=disable_compile):
 def Q_(p, nλn, nt, iA, iB, nA, nB, invM, Q):
     batch = p.shape[1]
     nλt = nλn * nt
@@ -543,14 +542,14 @@ def ipm_simulate(batch_part_states: list[dict], ipm_settings):
         kkt_res_best[inds[flag]] = kkt_res[flag]
         result_x[:, inds[flag]] = x[:, flag]
 
-        # remove converged
-        flag = kkt_res > ipm.kkt_conv_eps
-        inds = inds[flag]
-        q, h, x, s, z, invP = q[:, flag], h[:, flag], x[:, flag], s[:, flag], z[:, flag], invP[:, flag]
-        r1, r2, r3 = r1[:, flag], r2[:, flag], r3[:, flag]
-
-        if inds.shape[0] == 0:
-            break
+        # # remove converged
+        # flag = kkt_res > ipm.kkt_conv_eps
+        # inds = inds[flag]
+        # q, h, x, s, z, invP = q[:, flag], h[:, flag], x[:, flag], s[:, flag], z[:, flag], invP[:, flag]
+        # r1, r2, r3 = r1[:, flag], r2[:, flag], r3[:, flag]
+        #
+        # if inds.shape[0] == 0:
+        #     break
         end_timer('update')
 
     xclip = torch.clip(result_x, xl, xu)
