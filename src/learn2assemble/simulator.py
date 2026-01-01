@@ -237,6 +237,7 @@ def ipm_init(parts: list[Trimesh],
     H = GT_(G, *rbeG) + ipm['Q']
     cholesky_H = torch.linalg.cholesky(H)
     ipm['cholesky_H'] = cholesky_H
+    ipm['invH'] = torch.cholesky_inverse(cholesky_H)
 
     # auto parameters
     settings["ipm"]["Ccp"] = 1.2 * abs(torch.sum(settings['ipm']['g']).item())
@@ -355,7 +356,8 @@ def ipm_evaluate_result(ipm, xclip, ps):
 def ipm_start_solve(ipm, h, q):
     rbe = ipm.nλn, ipm.nt, ipm.nf, ipm.mu
     b = GT_(h, *rbe) - q
-    x = torch.cholesky_solve(b, ipm.cholesky_H)
+    #x = torch.cholesky_solve(b, ipm.cholesky_H)
+    x = ipm['invH'] @ b
 
     oldz = G_(x, *rbe) - h
     alpha_p = torch.max(oldz, 0).values
