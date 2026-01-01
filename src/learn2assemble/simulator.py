@@ -543,6 +543,42 @@ def simulate_ipm(batch_part_states: list[dict], ipm_settings):
     end_timer('ipm')
     return velocity, (velocity_inf_nrm < ipm.velocity_tol)
 
+def ipm_simulate_parallel_proc(gpu_id, part_states, ipm_settings, return_dict):
+    velocity, stable_flag = simulate_ipm(part_states, ipm_settings)
+    return_dict[gpu_id] = velocity.cpu().numpy(), stable_flag.cpu().numpy()
+
+def ipm_simulate_parallel(batch_part_states: list[dict], list_ipm_settings):
+    n_parallel = len(list_ipm_settings)
+    n_state_per_process = batch_part_states.shape[0] // n_parallel
+
+    manager = multiprocessing.Manager()
+    return_dict = manager.dict()
+
+    for id in range(n_parallel):
+        part_states = batch_part_states[id * n_state_per_process : n_state_per_process * (id +1), :]
+        part_states = part_states.to(device = list_ipm_settings[id]['device'])
+        p = multiprocessing.Process(target=worker, args=(i, part_states, list_ipm_settings[id], return_dict))
+        jobs.append(p)
+        p.start()
+
+    velocity = []
+    stable_flag = []
+    for proc in jobs:
+        proc.joint()
+
+    for id in range(n_parallel):
+        velocity.append(return_dict[id])
+        stable_flag.append(stable_flag[id])
+    velocity = np.hstack(velocity)
+    stable_flag = np.hstack(stable_flag)
+    return velocity, stable_flag
+
+def duplicate_ipm_settings(ipm_settings, gpu_ids: list):
+    list_ipm_settings = []
+    for gpu_id in gpu_ids:
+        list_ipm_settings.append(ipm_update_device(ipm_settings[gpu_id], device=f"cuda:{gpu_id}"))
+    return list_ipm_settings
+
 def ipm_auto_parameters(settings: dict):
     # decide Ccp
     settings["ipm"]["Ccp"] = 1.1 * abs(torch.sum(settings['ipm']['g']).item())
@@ -635,9 +671,7 @@ def simulate_gurobi(batch_part_states: list[dict],
     end_timer('gurobi')
     return vs, np.array(flags)
 
-def simulate(parts: list[Trimesh],
-             contacts: list[dict],
-             batch_part_states: list[dict],
+def simulate(batch_part_states: list[dict],
              settings: dict):
     rbe_pre_computed = settings.get("rbe", {"pre-computed": False}).get("pre-computed", False)
 
