@@ -24,7 +24,6 @@ else:
 def inf_norm(x):
     return torch.max(torch.abs(x), dim=0).values
 
-
 def reset_timer(name):
     if logger['activate']:
         torch.cuda.synchronize()
@@ -33,7 +32,6 @@ def reset_timer(name):
             logger['log'][name] = 0.0
         else:
             logger['timer'][name] = perf_counter()
-
 
 def end_timer(name):
     if logger['activate']:
@@ -78,7 +76,7 @@ def G_(p, nλn, nt, nf, mu):
     return torch.vstack([-λn, -p, p])
 
 
-@torch.compile(disable=disable_compile, dynamic=False)
+@torch.compile(disable=disable_compile)
 def GTZSG_(p, ZS, nλn, nt, nf, mu):
     nbatch = p.shape[1]
     nλt = nλn * nt
@@ -104,7 +102,7 @@ def GTZSG_(p, ZS, nλn, nt, nf, mu):
     return λ3 - λ2 + λ0
 
 
-@torch.compile(disable=disable_compile, dynamic=False)
+@torch.compile(disable=disable_compile)
 def Q_(p, nλn, nt, iA, iB, nA, nB, invM, Q):
     batch = p.shape[1]
     nλt = nλn * nt
@@ -407,7 +405,6 @@ def ipm_centering_params(s, z, ds_a, dz_a, n_sample):
     sigma = sigma ** 3
     return sigma, mu
 
-@torch.compile(disable=disable_compile)
 def ipm_solve_rhs(ipm, s, z, invP, v1, v2, v3, n_iter, dx=None):
     device = ipm.device
 
