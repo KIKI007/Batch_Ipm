@@ -729,7 +729,7 @@ if __name__ == '__main__':
         "n_pcg_eval_iter": 10,
         "x_bound_tol": 1E-5,
         "kkt_conv_eps": 1E-5,
-        "float_type": torch.float32,
+        "float_type": torch.float64,
     }
     reset_timer('contact')
     contacts = compute_assembly_contacts(parts, default_settings)
