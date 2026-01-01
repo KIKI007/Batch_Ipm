@@ -566,8 +566,9 @@ def ipm_simulate_parallel(batch_part_states: list[dict], list_ipm_settings):
         proc.joint()
 
     for id in range(n_parallel):
-        velocity.append(return_dict[id])
-        stable_flag.append(stable_flag[id])
+        velocity.append(return_dict[id][0])
+        stable_flag.append(return_dict[id][1])
+        
     velocity = np.hstack(velocity)
     stable_flag = np.hstack(stable_flag)
     return velocity, stable_flag
