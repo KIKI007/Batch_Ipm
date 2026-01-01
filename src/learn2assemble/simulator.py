@@ -556,8 +556,7 @@ def ipm_simulate_parallel(batch_part_states: list[dict], list_ipm_settings):
 
     for id in range(n_parallel):
         part_states = batch_part_states[id * n_state_per_process : n_state_per_process * (id +1), :]
-        part_states = part_states.to(device = list_ipm_settings[id]['device'])
-        p = multiprocessing.Process(target=worker, args=(i, part_states, list_ipm_settings[id], return_dict))
+        p = multiprocessing.Process(target=ipm_simulate_parallel_proc, args=(i, part_states, list_ipm_settings[id], return_dict))
         jobs.append(p)
         p.start()
 
