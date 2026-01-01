@@ -119,7 +119,6 @@ def Q_(p, nλn, nt, iA, iB, nA, nB, invM, Q):
     λ = torch.sum(λ.reshape(-1, 6, batch), dim=1)
     return torch.vstack([λ, -x])
 
-
 def ipm_contacts(ipm, parts, contacts, density, boundary_part_ids):
     iAs = []
     iBs = []
@@ -379,11 +378,16 @@ def ipm_kkt_res(ipm, q, h, x, s, z):
 
 def ipm_precond(ipm, s, z):
     ZS = z / s
+    #rbe = ipm.nλn, ipm.nt, ipm.nf, ipm.mu
+    #I = torch.eye(ipm.GG.shape[1], device=s.device, dtype=s.dtype)
+    #diagG = torch.diagonal(GTZSG_(I, ZS, *rbe))
     diagG = torch.einsum("ji, jb -> ib", ipm.GG, ZS)
     invM = diagG + ipm.diagQ[:, None]
+    #invM = ipm.diagQ[:, None].repeat((1, s.shape[1]))
     invM = 1.0 / invM
     return invM
 
+@torch.compile(disable=disable_compile)
 def ipm_linesearch(s, ds, z, dz, n_sample=32):
     device = s.device
     alpha = torch.linspace(0, 1, n_sample, device=device, dtype=s.dtype)
@@ -404,6 +408,7 @@ def ipm_centering_params(s, z, ds_a, dz_a, n_sample):
     sigma = sigma ** 3
     return sigma, mu
 
+@torch.compile(disable=disable_compile)
 def ipm_solve_rhs(ipm, s, z, invP, v1, v2, v3, n_iter, dx=None):
     device = ipm.device
 
@@ -454,7 +459,7 @@ def ipm_solve_rhs(ipm, s, z, invP, v1, v2, v3, n_iter, dx=None):
         # recompute the residual to avoid numerical errors
         rk = b - (GTZSG_(xk, ZS, *rbeG) + Q_(xk, *rbeQ))
         uk = invP * rk
-        if rel < ipm.pcg_rel_eps:
+        if rel < ipm.rel_eps:
             break
 
     ds = v3 - G_(dx, *rbeG)
@@ -490,7 +495,7 @@ def ipm_simulate(batch_part_states: list[dict], ipm_settings):
     x, s, z = ipm_start_solve(ipm, h, q)
     result_x = torch.zeros_like(x)
     inds = torch.arange(s.shape[1], dtype=torch.long, device=device)
-    kkt_res_best = torch.ones(batch_part_states.shape[0], device=device, dtype=floatType) * torch.inf
+    kkt_res_best = torch.ones(batch_part_states.shape[0], device=device, dtype=floatType) * 1E9
     r1, r2, r3, kkt_res = ipm_kkt_res(ipm, q, h, x, s, z)
     end_timer('start_solve')
 
@@ -537,20 +542,23 @@ def ipm_simulate(batch_part_states: list[dict], ipm_settings):
         z = z + alpha * dz
 
         # update result_x based on kkt residual
+        pre_res = kkt_res_best.clone()
         r1, r2, r3, kkt_res = ipm_kkt_res(ipm, q, h, x, s, z)
         flag = kkt_res_best[inds] > kkt_res
         kkt_res_best[inds[flag]] = kkt_res[flag]
         result_x[:, inds[flag]] = x[:, flag]
+        kkt_res_best = torch.clip(kkt_res_best, ipm.kkt_conv_eps, torch.inf)
 
         # # remove converged
         # flag = kkt_res > ipm.kkt_conv_eps
         # inds = inds[flag]
         # q, h, x, s, z, invP = q[:, flag], h[:, flag], x[:, flag], s[:, flag], z[:, flag], invP[:, flag]
         # r1, r2, r3 = r1[:, flag], r2[:, flag], r3[:, flag]
-        #
-        if torch.max(kkt_res_best) < ipm.kkt_conv_eps:
+
+        rel_ = torch.max(torch.abs(kkt_res_best - pre_res) / pre_res)
+        abs_ = torch.max(kkt_res_best)
+        if rel_ < ipm.rel_eps or abs_ < ipm.kkt_conv_eps:
             break
-            
         end_timer('update')
 
     xclip = torch.clip(result_x, xl, xu)
@@ -572,13 +580,11 @@ def ipm_simulate_parallel(batch_part_states: list[dict], ipm_settings_cpu, gpu_i
 
     jobs = []
     for id in range(n_parallel):
-
         if id != n_parallel - 1:
             part_states = batch_part_states[id * n_state_per_process: n_state_per_process * (id + 1), :].cpu()
         else:
             # last take all
             part_states = batch_part_states[id * n_state_per_process:, :].cpu()
-
         p = mp.Process(target=ipm_simulate_parallel_proc,
                        args=(gpu_ids[id], part_states, ipm_settings_cpu, return_dict))
         jobs.append(p)
@@ -663,9 +669,8 @@ def simulate(parts: list[Trimesh],
              contacts: list[dict],
              batch_part_states: list[dict],
              settings: dict):
-    rbe_pre_computed = settings.get("rbe", {"pre-computed": False}).get("pre-computed", False)
-
     if "gurobi" in settings:
+        rbe_pre_computed = settings.get("rbe", {"pre-computed": False}).get("pre-computed", False)
         if not rbe_pre_computed:
             init_rbe(parts, contacts, settings)
         gurobi_pre_computed = settings["gurobi"].get("pre-computed", False)
@@ -690,19 +695,19 @@ if __name__ == '__main__':
     except RuntimeError:
         exit(0)
 
-    default_settings['rbe']['mu'] = 0.2
-    default_settings["assembly"]["contact_shrink_ratio"] = 0.1  # for robustnessly computing the contact surfaces
+    default_settings['rbe']['mu'] = 0.5
+    default_settings["assembly"]["contact_shrink_ratio"] = 0.0  # for robustnessly computing the contact surfaces
 
-    n_batch = 8415
+    n_batch = 2048
     torch.manual_seed(0)
-    name = "tetris-999"
+    name = "dome"
     parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + f"/{name}")
-    default_settings['env']['boundary_part_ids'] = [0]
+    default_settings['env']['boundary_part_ids'] = [len(parts) - 1]
 
     filename = os.path.join(RESOURCE_DIR, f"curriculum/{name}.pt")
     part_states = torch.load(filename)['input']
-    part_states[:, 10] = 0
-    part_states[:, 31] = 0
+    #part_states[:, 10] = 0
+    #part_states[:, 31] = 0
 
     # choose the max parts
     inds = torch.sum(part_states, dim=1).cpu().numpy()
@@ -713,10 +718,11 @@ if __name__ == '__main__':
     part_states = part_states[:n_batch, :]
     # default_settings['gurobi'] = {}
     default_settings['ipm'] = {
-        "n_iter": 30,
-        "n_pcg_iter": 400,
+        "n_iter": 25,
+        "n_pcg_iter": 100,
         "n_pcg_eval_iter": 10,
-        "pcg_rel_eps": 1E-4,
+        "rel_eps": 1E-2,
+        "kkt_conv_eps": 1E-5,
         "float_type": torch.float64,
     }
     reset_timer('contact')
@@ -727,18 +733,18 @@ if __name__ == '__main__':
     ipm_settings = ipm_init(parts, contacts, default_settings)
     end_timer('init ipm')
 
-    logger['activate'] = False
-    torch.cuda.synchronize()
-    timer = perf_counter()
     ipm_settings_cpu = ipm_update_device(ipm_settings, 'cpu')
-
     gpus = np.arange(torch.cuda.device_count())
     print("available gpus:", gpus)
-    v_fp32, stable_fp32 = ipm_simulate_parallel(part_states, ipm_settings_cpu, gpus)
 
+    torch.cuda.synchronize()
+    timer = perf_counter()
+    #v_fp32, stable_fp32 = ipm_simulate_parallel(part_states, ipm_settings_cpu, gpus)
+    v_fp32, stable_fp32 = simulate(parts, contacts, part_states, default_settings)
     torch.cuda.synchronize()
     print("time ", (perf_counter() - timer) / stable_fp32.shape[0])
     print(np.sum(stable_fp32).item() / stable_fp32.shape[0])
+    print_logger(1)
 
     # # render
     # import polyscope as ps
