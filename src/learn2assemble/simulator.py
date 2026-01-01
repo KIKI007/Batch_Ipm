@@ -715,7 +715,7 @@ if __name__ == '__main__':
     part_states = part_states[inds, :]
 
     # random
-    part_states = part_states[:n_batch, :]
+    part_states = part_states[:n_batch, :].repeat((4, 1))
     # default_settings['gurobi'] = {}
     default_settings['ipm'] = {
         "n_iter": 25,
