@@ -15,6 +15,11 @@ logger = {
     'activate': True,
 }
 
+if platform.system() == 'Windows':
+    disable_compile = True
+else:
+    disable_compile = False
+
 def inf_norm(x):
     return torch.max(torch.abs(x), dim=0).values
 
@@ -45,6 +50,7 @@ def print_logger(nbatch = 1.0, names = []):
                 if name in logger['log']:
                     print(name, f":\t\t\t {logger['log'][name] / nbatch:.3e}")
 
+@torch.compile(disable=disable_compile)
 def GT_(p, nλn, nt, nf, mu):
     nλt = nλn * nt
     nx = nλn + nλt + nf
@@ -55,6 +61,7 @@ def GT_(p, nλn, nt, nf, mu):
     λ3 = p[nλn + nx:]
     return λ3 - λ2 + λ0
 
+@torch.compile(disable=disable_compile)
 def G_(p, nλn, nt, nf, mu):
     nλt = nλn * nt
     λn, λt = p[:nλn, :], p[nλn: nλn + nλt, :]
@@ -64,6 +71,7 @@ def G_(p, nλn, nt, nf, mu):
     λn.index_add_(0, inds, λt, alpha=-1.0)
     return torch.vstack([-λn, -p, p])
 
+@torch.compile(disable=disable_compile)
 def GTZSG_(p, ZS, nλn, nt, nf, mu):
     nbatch = p.shape[1]
     nλt = nλn * nt
@@ -88,6 +96,7 @@ def GTZSG_(p, ZS, nλn, nt, nf, mu):
     λ3 = ZSGp[nλn + nx:]
     return λ3 - λ2 + λ0
 
+@torch.compile(disable=disable_compile)
 def Q_(p, nλn, nt, iA, iB, nA, nB, invM, Q):
     batch = p.shape[1]
     nλt = nλn * nt
@@ -212,37 +221,27 @@ def init_ipm(parts: list[Trimesh],
     ipm['density'] = compute_best_density(parts, ipm['boundary_part_ids'])
     ipm_contacts(ipm, parts, contacts, ipm['density'], ipm['boundary_part_ids'])
 
-    if platform.system() == 'Windows' or not ipm['compile']:
-        disable_compile = True
-    else:
-        disable_compile = False
-
-    # compile function
-    if not disable_compile:
-        torch.set_float32_matmul_precision('high')
-    else:
-        torch.set_float32_matmul_precision('highest')
-
-    ipm['Q_'] = torch.compile(Q_, disable=disable_compile)
-    ipm['GT_'] = torch.compile(GT_, disable=disable_compile)
-    ipm['G_'] = torch.compile(G_, disable=disable_compile)
-    ipm['GTZSG_'] = torch.compile(GTZSG_, disable=disable_compile)
+    # ipm['Q_'] = torch.compile(Q_, disable=disable_compile)
+    # ipm['GT_'] = torch.compile(GT_, disable=disable_compile)
+    # ipm['G_'] = torch.compile(G_, disable=disable_compile)
+    # ipm['GTZSG_'] = torch.compile(GTZSG_, disable=disable_compile)
+    torch.set_float32_matmul_precision('high')
 
     # compute pre-conditioner
     nx = ipm['nλn'] * (ipm["nt"] + 1) + ipm["nf"]
     rbeG = ipm["nλn"], ipm["nt"], ipm["nf"], ipm["mu"]
     rbeQ = ipm['nλn'], ipm['nt'], ipm['iAs'], ipm['iBs'], ipm['nAs'], ipm['nBs'], ipm['invM'], None
     p = torch.eye(nx, device=device, dtype=float_type)
-    G = ipm['G_'](p, *rbeG)
+    G = G_(p, *rbeG)
     ipm['GG'] = G * G
-    ipm['Q'] = ipm['Q_'](p, *rbeQ)
+    ipm['Q'] = Q_(p, *rbeQ)
     ipm['diagQ'] = torch.diagonal(ipm['Q'])
 
     # cannot compile just use Q directly
-    if disable_compile:
-        ipm['Q_'] = lambda x, *args: args[-1] @ x
+    # if disable_compile:
+    #     ipm['Q_'] = lambda x, *args: args[-1] @ x
 
-    H = ipm['GT_'](G, *rbeG) + ipm['Q']
+    H = GT_(G, *rbeG) + ipm['Q']
     cholesky_H = torch.linalg.cholesky(H)
     ipm['cholesky_H'] = cholesky_H
 
@@ -329,7 +328,7 @@ def ipm_evaluate_result(ipm, xclip, ps):
 
 def ipm_start_solve(ipm, h, q):
     rbe = ipm.nλn, ipm.nt, ipm.nf, ipm.mu
-    b = ipm.GT_(h, *rbe) - q
+    b = GT_(h, *rbe) - q
     x = torch.cholesky_solve(b, ipm.cholesky_H)
 
     oldz = G_(x, *rbe) - h
@@ -345,7 +344,7 @@ def ipm_start_solve(ipm, h, q):
 def ipm_kkt_res(ipm, q, h, x, s, z):
     rbe = ipm.nλn, ipm.nt, ipm.nf, ipm.mu
     rbeQ = ipm.nλn, ipm.nt, ipm.iAs, ipm.iBs, ipm.nAs, ipm.nBs, ipm.invM, ipm.Q
-    r1 = ipm.Q_(x, *rbeQ) + q + ipm.GT_(z, *rbe)
+    r1 = Q_(x, *rbeQ) + q + GT_(z, *rbe)
     r2 = s * z
     r3 = G_(x, *rbe) + s - h
     kkt_res = inf_norm(torch.vstack([r1, r2, r3]))
@@ -385,7 +384,7 @@ def ipm_solve_rhs(ipm, s, z, invP, v1, v2, v3, n_iter, dx=None):
     rbeQ = ipm.nλn, ipm.nt, ipm.iAs, ipm.iBs, ipm.nAs, ipm.nBs, ipm.invM, ipm.Q
 
     ZS = z / s
-    b = ipm.GT_((z * v3 - v2) / s, *rbeG) + v1
+    b = GT_((z * v3 - v2) / s, *rbeG) + v1
 
     if dx is None:
         dx = torch.zeros_like(b)
@@ -393,7 +392,7 @@ def ipm_solve_rhs(ipm, s, z, invP, v1, v2, v3, n_iter, dx=None):
         rk = b.clone()
     else:
         xk = dx.clone()
-        rk = b - (ipm.GTZSG_(dx, ZS, *rbeG) + ipm.Q_(dx, *rbeQ))
+        rk = b - (GTZSG_(dx, ZS, *rbeG) + Q_(dx, *rbeQ))
         dx = torch.zeros_like(b)
 
     dx_rk = torch.ones(b.shape[1], device=device, dtype=b.dtype) * 1E9
@@ -407,7 +406,7 @@ def ipm_solve_rhs(ipm, s, z, invP, v1, v2, v3, n_iter, dx=None):
         for t in range(ipm.n_pcg_eval_iter):
             # Apk = GT @ (ZS * (G @ pk)) + Q @ pk
             # fast computation
-            Apk = ipm.GTZSG_(pk, ZS, *rbeG) + ipm.Q_(pk, *rbeQ)
+            Apk = GTZSG_(pk, ZS, *rbeG) + Q_(pk, *rbeQ)
 
             ru = torch.sum(rk * uk, dim=0)
             ak = ru / torch.sum(pk * Apk, dim=0)
@@ -426,12 +425,12 @@ def ipm_solve_rhs(ipm, s, z, invP, v1, v2, v3, n_iter, dx=None):
         rel = torch.max(torch.abs(dx_rk - prev_rk) / prev_rk)
 
         # recompute the residual to avoid numerical errors
-        rk = b - (ipm.GTZSG_(xk, ZS, *rbeG) + ipm.Q_(xk, *rbeQ))
+        rk = b - (GTZSG_(xk, ZS, *rbeG) + Q_(xk, *rbeQ))
         uk = invP * rk
         if rel < ipm.pcg_rel_eps:
             break
 
-    ds = v3 - ipm.G_(dx, *rbeG)
+    ds = v3 - G_(dx, *rbeG)
     dz = (v2 - z * ds) / s
     return dx, ds, dz
 
@@ -537,7 +536,6 @@ def simulate_ipm(batch_part_states: list[dict], ipm_settings):
 
         if inds.shape[0] == 0:
             break
-
         end_timer('update')
 
     xclip = torch.clip(result_x, xl, xu)
@@ -545,11 +543,11 @@ def simulate_ipm(batch_part_states: list[dict], ipm_settings):
     end_timer('ipm')
     return velocity, (velocity_inf_nrm < ipm.velocity_tol)
 
-def ipm_auto_parameters(settings: dict, update_n_pcg = True):
+def ipm_auto_parameters(settings: dict, search_n_pcg = True):
     # decide Ccp
     settings["ipm"]["Ccp"] = 1.2 * abs(torch.sum(settings['ipm']['g']).item())
 
-    if update_n_pcg:
+    if search_n_pcg:
         n_pcg_it = max(int(100), int((settings["ipm"]["Q"].shape[0] * 0.03) // 10 * 10))
         complete_states = torch.ones((1, settings['ipm']['n_part']), dtype=torch.long)
         complete_states[:, settings['ipm']['boundary_part_ids']] = 2
@@ -572,6 +570,7 @@ def ipm_simulate_parallel_proc(gpu_id, part_states, ipm_settings, return_dict):
     return_dict[gpu_id] = velocity.cpu().numpy(), stable_flag.cpu().numpy()
 
 def ipm_simulate_parallel(batch_part_states: list[dict], list_ipm_settings):
+
     n_parallel = len(list_ipm_settings)
     n_state_per_process = batch_part_states.shape[0] // n_parallel
 
@@ -579,21 +578,21 @@ def ipm_simulate_parallel(batch_part_states: list[dict], list_ipm_settings):
     return_dict = manager.dict()
 
     jobs = []
-    for id in range(n_parallel):
-        part_states = batch_part_states[id * n_state_per_process : n_state_per_process * (id +1), :]
-        part_states = part_states.to(device = list_ipm_settings[id]['device'])
-        p = multiprocessing.Process(target=worker, args=(i, part_states, list_ipm_settings[id], return_dict))
+    for gpu_id in range(n_parallel):
+        part_states = batch_part_states[gpu_id * n_state_per_process : n_state_per_process * (gpu_id +1), :]
+        p = multiprocessing.Process(target=ipm_simulate_parallel_proc, args=(gpu_id, part_states, list_ipm_settings[gpu_id], return_dict))
         jobs.append(p)
         p.start()
 
     velocity = []
     stable_flag = []
     for proc in jobs:
-        proc.joint()
+        proc.join()
 
     for id in range(n_parallel):
-        velocity.append(return_dict[id])
-        stable_flag.append(stable_flag[id])
+        velocity.append(return_dict[id][0])
+        stable_flag.append(return_dict[id][1])
+
     velocity = np.hstack(velocity)
     stable_flag = np.hstack(stable_flag)
     return velocity, stable_flag
@@ -601,7 +600,7 @@ def ipm_simulate_parallel(batch_part_states: list[dict], list_ipm_settings):
 def duplicate_ipm_settings(ipm_settings, gpu_ids: list):
     list_ipm_settings = []
     for gpu_id in gpu_ids:
-        list_ipm_settings.append(ipm_update_device(ipm_settings[gpu_id], device=f"cuda:{gpu_id}"))
+        list_ipm_settings.append(ipm_update_device(ipm_settings, device=f"cuda:{gpu_id}"))
     return list_ipm_settings
 
 def init_gurobi(parts, contacts, settings: dict):
@@ -699,7 +698,7 @@ if __name__ == '__main__':
     default_settings['rbe']['Ccp'] = 500
     default_settings['rbe']['density'] = 100
 
-    n_batch = 1
+    n_batch = 512
     torch.manual_seed(0)
     name = "tetris-999"
     parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + f"/{name}")
@@ -707,15 +706,13 @@ if __name__ == '__main__':
 
     filename = os.path.join(RESOURCE_DIR, f"curriculum/{name}.pt")
     part_states = torch.load(filename)['input']
+    part_states[:, 10] = 0
+    part_states[:, 31] = 0
 
     # choose the max parts
     inds = torch.sum(part_states, dim=1).cpu().numpy()
     inds = np.argsort(inds).tolist()[::-1]
     part_states = part_states[inds, :]
-    part_states[0, :] = 1
-    part_states[0, 0] = 2
-    part_states[0, 10] = 0
-    part_states[0, 31] = 0
 
     # random
     part_states = part_states[:n_batch, :]
@@ -737,12 +734,14 @@ if __name__ == '__main__':
     end_timer('init ipm')
 
     reset_timer('auto parameter')
-    ipm_auto_parameters(settings = default_settings, update_n_pcg = True)
+    ipm_auto_parameters(settings = default_settings, search_n_pcg = False)
     end_timer('auto parameter')
+
+    list_settings = duplicate_ipm_settings(default_settings['ipm'], [0])
 
     torch.cuda.synchronize()
     timer = perf_counter()
-    v_fp32, stable_fp32 = simulate(parts, contacts, part_states, default_settings)
+    v_fp32, stable_fp32 = ipm_simulate_parallel(part_states, list_settings)
 
     torch.cuda.synchronize()
     print("time ", perf_counter() - timer)
