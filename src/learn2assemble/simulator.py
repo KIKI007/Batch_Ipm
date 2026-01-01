@@ -556,9 +556,10 @@ def ipm_simulate(batch_part_states: list[dict], ipm_settings):
         # q, h, x, s, z, invP = q[:, flag], h[:, flag], x[:, flag], s[:, flag], z[:, flag], invP[:, flag]
         # r1, r2, r3 = r1[:, flag], r2[:, flag], r3[:, flag]
 
-        rel_ = torch.max(torch.abs(kkt_res_best - pre_res) / pre_res)
+        #rel_ = torch.max(torch.abs(kkt_res_best - pre_res) / pre_res)
         abs_ = torch.max(kkt_res_best)
-        if rel_ < ipm.rel_eps or abs_ < ipm.kkt_conv_eps:
+        #print(rel_, abs_)
+        if abs_ < ipm.kkt_conv_eps:
             break
         end_timer('update')
 
@@ -696,7 +697,7 @@ if __name__ == '__main__':
     except RuntimeError:
         exit(0)
 
-    default_settings['rbe']['mu'] = 0.5
+    default_settings['rbe']['mu'] = 0.55
     default_settings["assembly"]["contact_shrink_ratio"] = 0.0  # for robustnessly computing the contact surfaces
 
     n_batch = 512
@@ -723,6 +724,7 @@ if __name__ == '__main__':
         "n_pcg_iter": 100,
         "n_pcg_eval_iter": 10,
         "rel_eps": 1E-2,
+        "x_bound_tol": 1E-5,
         "kkt_conv_eps": 1E-5,
         "float_type": torch.float32,
     }
@@ -749,12 +751,12 @@ if __name__ == '__main__':
     print(np.sum(stable_fp32).item() / stable_fp32.shape[0])
     print_logger(1)
 
-    # # render
+    # render
     # import polyscope as ps
     #
     # init_polyscope()
     # t = 0
-    #
+
     # def callback():
     #     global t
     #     changed, t = psim.SliderFloat("time", v=t, v_min=0, v_max=1)
