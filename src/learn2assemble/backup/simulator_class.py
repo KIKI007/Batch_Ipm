@@ -108,7 +108,6 @@ def init_ipm(parts: list[Trimesh],
                                       "pcg_rel_eps": 1E-2,
                                       "x_bound_tol": 1E-6,
                                       "float_type": torch.float32,
-                                      "use_Q_fast": True,
                                       "device" : torch.device("cuda" if torch.cuda.is_available() else "cpu")})
 
     ipm = update_default_settings(settings,
@@ -227,7 +226,7 @@ class IpmSim(torch.nn.Module):
         self.ipm_settings = ipm_update_device(ipm_settings, device=ipm_settings['device'])
         for n, val in self.ipm_settings.items():
             if torch.is_tensor(val):
-                self.register_buffer(n, tensor = self.ipm_settings[n], persistent=False)
+                self.register_buffer(n, tensor = self.ipm_settings[n], persistent=True)
 
     def GT_(self, p, nλn, nt, nf, mu):
         nλt = nλn * nt
@@ -398,6 +397,7 @@ class IpmSim(torch.nn.Module):
         invM = 1.0 / invM
         return invM
 
+    @torch.compiler.disable
     def ipm_linesearch(self, s, ds, z, dz, n_sample=32):
         device = s.device
         alpha = torch.linspace(0, 1, n_sample, device=device, dtype=s.dtype)
@@ -557,14 +557,16 @@ class IpmSim(torch.nn.Module):
         velocity, velocity_inf_nrm = self.ipm_evaluate_result(ipm, xclip, ps)
         return velocity, (velocity_inf_nrm < ipm.velocity_tol)
 
-    @torch.no_grad()
     def forward(self, x):
-        print(x.shape[0])
+        new_settings = {}
+        print(self._buffers)
         for n, val in self.ipm_settings.items():
             if torch.is_tensor(val):
-                self.ipm_settings[n] = self.get_buffer(n)
-                self.ipm_settings['device'] = self.ipm_settings[n].device
-        velocity, stable_flag = self.simulate_ipm(x, self.ipm_settings)
+                new_settings[n] = self.get_buffer(n)
+                new_settings['device'] = new_settings[n].device
+            else:
+                new_settings[n] = copy.deepcopy(val)
+        velocity, stable_flag = self.simulate_ipm(x, new_settings)
         return stable_flag
 
 def simulate(parts: list[Trimesh],
@@ -621,8 +623,8 @@ if __name__ == '__main__':
         "n_pcg_eval_iter": 10,
         "pcg_rel_eps": 0.1,
         "float_type": torch.float32,
-        "use_Q_fast": True,
     }
+
     contacts = compute_assembly_contacts(parts, default_settings)
     init_ipm(parts, contacts, default_settings)
     ipm_auto_parameters(settings = default_settings)
@@ -630,7 +632,7 @@ if __name__ == '__main__':
     sim = IpmSim(default_settings["ipm"])
     if platform.system() == "Linux":
         sim = torch.compile(sim)
-    parallel_sim = torch.nn.DataParallel(sim)
+    parallel_sim = torch.nn.DataParallel(sim, [0, 1])
 
     torch.cuda.synchronize()
     timer = perf_counter()

@@ -1,6 +1,6 @@
 from learn2assemble import default_settings
 from learn2assemble.assembly import load_assembly_from_files, compute_assembly_contacts
-from learn2assemble.backup.simulator_class import init_ipm, print_logger, ipm_search_best_parameters
+from learn2assemble.simulator import init_ipm, print_logger, ipm_auto_parameters
 from learn2assemble.render import *
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
@@ -8,6 +8,8 @@ import torch
 import platform
 import os
 import learn2assemble
+from os.path import isfile, join, isdir
+from os import listdir
 
 if platform.system() == 'Windows':
     curriculumn_folder = "D:/curriculum_Thingi10K_12/Thingi10K_12"
@@ -35,14 +37,12 @@ def test_instance(obj_id, sol_id, ipm=True):
 
     default_settings['ipm'] = {
         "n_iter": 30,
-        "n_pcg_iter_1": 200,
-        "n_pcg_iter_2": 50,
         "n_pcg_eval_iter": 10,
         "n_linesearch": 32,
         "kkt_conv_eps": 1E-5,
-        "x_bound_tol": 1E-6,
+        "pcg_rel_eps": 1E-2,
         "float_type": torch.float32,
-        "use_Q_fast": True,
+        "compile": True,
     }
 
     # load geometry
@@ -66,7 +66,8 @@ def test_instance(obj_id, sol_id, ipm=True):
     part_states = part_states[inds, :]
 
     # search best parameters
-    ipm_search_best_parameters(part_states[-32:], 0.8, default_settings)
+    if not ipm_auto_parameters(default_settings):
+        return
 
     dataloader = DataLoader(
         TensorDataset(part_states),
@@ -79,7 +80,7 @@ def test_instance(obj_id, sol_id, ipm=True):
     with tqdm(total=len(dataloader)) as progress:
         for part_states in dataloader:
             part_states = part_states[0]
-            v_fp32, stable_fp32 = learn2assemble.simulator.simulate(parts, contacts, part_states, default_settings)
+            _, stable_fp32 = learn2assemble.simulator.simulate(parts, contacts, part_states, default_settings)
             tot_success += np.sum(stable_fp32)
             progress.set_postfix_str(np.sum(stable_fp32) / stable_fp32.shape[0])
             progress.update()
@@ -98,11 +99,12 @@ def test_instance(obj_id, sol_id, ipm=True):
     with open('result.json', 'w') as f:
         json.dump(result_table, f, indent=4)
 
-# sol_files = [f for f in listdir(curriculumn_folder) if isfile(join(curriculumn_folder, f))]
-# sol_files.sort()
-# for sol_file in sol_files:
-#     obj_id = sol_file.split('_')[2]
-#     sol_id = sol_file.split('_')[4].split('.')[0]
-#     print(obj_id, sol_id)
-#     test_instance(obj_id, sol_id, True)
-test_instance(1026, 0)
+sol_files = [f for f in listdir(curriculumn_folder) if isfile(join(curriculumn_folder, f))]
+sol_files.sort()
+sol_files = sol_files[::-1]
+for sol_file in sol_files:
+    obj_id = sol_file.split('_')[2]
+    sol_id = sol_file.split('_')[4].split('.')[0]
+    print(obj_id, sol_id)
+    test_instance(obj_id, sol_id, True)
+# test_instance(1026, 0)

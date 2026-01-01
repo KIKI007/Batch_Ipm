@@ -96,9 +96,6 @@ def compute_best_density(parts: list[Trimesh], boundary_part_ids):
     M1 = 0
     for part_id, part in enumerate(parts):
         if part_id not in boundary_part_ids:
-            #M = np.linalg.inv(part.moment_inertia)
-            #M2 += np.sum(M * M)
-            #M1 += np.sum(M)
             M = np.eye(3) / part.volume
             M2 += np.sum(M * M)
             M1 += np.sum(M)
