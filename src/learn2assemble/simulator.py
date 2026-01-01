@@ -250,19 +250,20 @@ def ipm_init(parts: list[Trimesh],
     return ipm
 
 def ipm_search_parameters(ipm_settings: dict, part_states, acc_tol=0.9):
-    n_pcg_it = ipm_settings["n_pcg_it"]
+    n_pcg_it = ipm_settings["n_pcg_iter"]
     best_acc = 0.0
-    for scale in [1, 2, 4, 8]:
-        ipm_settings["n_pcg_iter"] = n_pcg_it * scale
+    for scale in [1, 1.5, 2, 2.5, 3, 3.5, 4]:
+        ipm_settings["n_pcg_iter"] = int(n_pcg_it * scale)
         _, flag = ipm_simulate(part_states, ipm_settings)
-        acc = np.sum(flag) / flag.shape[0]
+        acc = torch.sum(flag).item() / flag.shape[0]
         best_acc = max(best_acc, acc)
+        print("num pcg iter = ", ipm_settings["n_pcg_iter"], f" with a {best_acc: .2f} success rate")
         if best_acc > acc_tol:
-            break
+            return True
     else:
         ipm_settings["n_pcg_iter"] = 400
         print(f"Failed to find pcg iter with a maximum {best_acc: .2f} success rate")
-    return ipm_settings
+        return False
 
 def ipm_init_parallel(ipm_settings,
                       gpu_ids: list):
@@ -498,7 +499,6 @@ def ipm_simulate(batch_part_states: list[dict], ipm_settings):
     reset_timer('start_solve')
     x, s, z = ipm_start_solve(ipm, h, q)
     result_x = torch.zeros_like(x)
-    inds = torch.arange(s.shape[1], dtype=torch.long, device=device)
     kkt_res_best = torch.ones(batch_part_states.shape[0], device=device, dtype=floatType) * 1E9
     r1, r2, r3, kkt_res = ipm_kkt_res(ipm, q, h, x, s, z)
     end_timer('start_solve')
@@ -548,9 +548,9 @@ def ipm_simulate(batch_part_states: list[dict], ipm_settings):
         # update result_x based on kkt residual
         pre_res = kkt_res_best.clone()
         r1, r2, r3, kkt_res = ipm_kkt_res(ipm, q, h, x, s, z)
-        flag = kkt_res_best[inds] > kkt_res
-        kkt_res_best[inds[flag]] = kkt_res[flag]
-        result_x[:, inds[flag]] = x[:, flag]
+        flag = kkt_res_best > kkt_res
+        kkt_res_best[flag] = kkt_res[flag]
+        result_x[:, flag] = x[:, flag]
         kkt_res_best = torch.clip(kkt_res_best, ipm.kkt_conv_eps, torch.inf)
 
         # # remove converged
@@ -700,12 +700,12 @@ if __name__ == '__main__':
     except RuntimeError:
         exit(0)
 
-    default_settings['rbe']['mu'] = 0.55
+    default_settings['rbe']['mu'] = 0.5
     default_settings["assembly"]["contact_shrink_ratio"] = 0.0  # for robustnessly computing the contact surfaces
 
-    n_batch = 2048
+    n_batch = 1
     torch.manual_seed(0)
-    name = "dome"
+    name = "tetris-999"
     parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + f"/{name}")
     default_settings['env']['boundary_part_ids'] = [len(parts) - 1]
 
@@ -720,16 +720,16 @@ if __name__ == '__main__':
     part_states = part_states[inds, :]
 
     # random
-    part_states = part_states[:n_batch, :].repeat(4, 1)
+    part_states = part_states[:n_batch, :]
 
     # default_settings['gurobi'] = {}
     default_settings['ipm'] = {
-        "n_iter": 30,
+        "n_iter": 25,
         "n_pcg_iter": 200,
         "n_pcg_eval_iter": 10,
         "x_bound_tol": 1E-5,
-        "kkt_conv_eps": 1E-5,
-        "float_type": torch.float64,
+        "kkt_conv_eps": 1E-4,
+        "float_type": torch.float32,
     }
     reset_timer('contact')
     contacts = compute_assembly_contacts(parts, default_settings)
@@ -743,7 +743,7 @@ if __name__ == '__main__':
     gpus = np.arange(torch.cuda.device_count())
     print("available gpus:", gpus)
 
-    v_fp32, stable_fp32 = simulate(parts, contacts, part_states, default_settings)
+    #v_fp32, stable_fp32 = simulate(parts, contacts, part_states, default_settings)
 
     torch.cuda.synchronize()
     timer = perf_counter()
@@ -754,20 +754,20 @@ if __name__ == '__main__':
     print(np.sum(stable_fp32).item() / stable_fp32.shape[0])
     print_logger(1)
 
-    # #render
-    # import polyscope as ps
-    #
-    # init_polyscope()
-    # t = 0
-    #
-    # def callback():
-    #     global t
-    #     changed, t = psim.SliderFloat("time", v=t, v_min=0, v_max=1)
-    #     if changed:
-    #         draw_assembly_motion(parts, part_states[0], v_fp32[:, 0] * t)
-    #
-    #
-    # draw_contacts(contacts, part_states[0])
-    # draw_assembly_motion(parts, part_states[0], v_fp32[:, 0] * t)
-    # ps.set_user_callback(callback)
-    # ps.show()
+    #render
+    import polyscope as ps
+
+    init_polyscope()
+    t = 0
+
+    def callback():
+        global t
+        changed, t = psim.SliderFloat("time", v=t, v_min=0, v_max=1)
+        if changed:
+            draw_assembly_motion(parts, part_states[0], v_fp32[:, 0] * t)
+
+
+    draw_contacts(contacts, part_states[0])
+    draw_assembly_motion(parts, part_states[0], v_fp32[:, 0] * t)
+    ps.set_user_callback(callback)
+    ps.show()
