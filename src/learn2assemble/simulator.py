@@ -716,7 +716,7 @@ if __name__ == '__main__':
     part_states = part_states[inds, :]
 
     # random
-    part_states = part_states[:n_batch, :].repeat((2, 1))
+    part_states = part_states[:n_batch, :].repeat((4, 1))
     # default_settings['gurobi'] = {}
     default_settings['ipm'] = {
         "n_iter": 25,
@@ -739,7 +739,7 @@ if __name__ == '__main__':
     print("available gpus:", gpus)
 
     v_fp32, stable_fp32 = simulate(parts, contacts, part_states, default_settings)
-    
+
     torch.cuda.synchronize()
     timer = perf_counter()
     #v_fp32, stable_fp32 = ipm_simulate_parallel(part_states, ipm_settings_cpu, gpus)
