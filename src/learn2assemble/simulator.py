@@ -738,6 +738,8 @@ if __name__ == '__main__':
     gpus = np.arange(torch.cuda.device_count())
     print("available gpus:", gpus)
 
+    v_fp32, stable_fp32 = simulate(parts, contacts, part_states, default_settings)
+    
     torch.cuda.synchronize()
     timer = perf_counter()
     #v_fp32, stable_fp32 = ipm_simulate_parallel(part_states, ipm_settings_cpu, gpus)
