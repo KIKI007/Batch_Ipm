@@ -450,17 +450,20 @@ def ipm_solve_rhs(ipm, s, z, invP, v1, v2, v3, n_iter, dx=None):
             pk = uk + betak[None, :] * pk
 
         # only update x when rk decrease
-        prev_rk = dx_rk.clone()
+        #prev_rk = dx_rk.clone()
         error = inf_norm(rk)
         flag = error < dx_rk
         dx[:, flag] = xk[:, flag]
         dx_rk[flag] = error[flag]
-        rel = torch.max(torch.abs(dx_rk - prev_rk) / prev_rk)
+        # rel = torch.max(torch.abs(dx_rk - prev_rk) / prev_rk)
 
         # recompute the residual to avoid numerical errors
         rk = b - (GTZSG_(xk, ZS, *rbeG) + Q_(xk, *rbeQ))
         uk = invP * rk
-        if rel < ipm.rel_eps:
+        # if rel < ipm.rel_eps:
+        #     break
+        abs_ = torch.max(dx_rk)
+        if abs_ < ipm.kkt_conv_eps / 10:
             break
 
     ds = v3 - G_(dx, *rbeG)
@@ -721,10 +724,9 @@ if __name__ == '__main__':
     # default_settings['gurobi'] = {}
     default_settings['ipm'] = {
         "n_iter": 30,
-        "n_pcg_iter": 100,
+        "n_pcg_iter": 200,
         "n_pcg_eval_iter": 10,
-        "rel_eps": 1E-2,
-        "x_bound_tol": 1E-6,
+        "x_bound_tol": 1E-5,
         "kkt_conv_eps": 1E-5,
         "float_type": torch.float32,
     }
@@ -751,12 +753,12 @@ if __name__ == '__main__':
     print(np.sum(stable_fp32).item() / stable_fp32.shape[0])
     print_logger(1)
 
-    # render
+    # #render
     # import polyscope as ps
     #
     # init_polyscope()
     # t = 0
-
+    #
     # def callback():
     #     global t
     #     changed, t = psim.SliderFloat("time", v=t, v_min=0, v_max=1)
