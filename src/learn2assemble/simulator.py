@@ -548,8 +548,9 @@ def ipm_simulate(batch_part_states: list[dict], ipm_settings):
         # q, h, x, s, z, invP = q[:, flag], h[:, flag], x[:, flag], s[:, flag], z[:, flag], invP[:, flag]
         # r1, r2, r3 = r1[:, flag], r2[:, flag], r3[:, flag]
         #
-        # if inds.shape[0] == 0:
-        #     break
+        if torch.max(kkt_res_best) < ipm.kkt_conv_eps:
+            print("stop at ", it)
+            break
         end_timer('update')
 
     xclip = torch.clip(result_x, xl, xu)
