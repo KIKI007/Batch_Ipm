@@ -720,11 +720,11 @@ if __name__ == '__main__':
     part_states = part_states[:n_batch, :]
     # default_settings['gurobi'] = {}
     default_settings['ipm'] = {
-        "n_iter": 25,
+        "n_iter": 30,
         "n_pcg_iter": 100,
         "n_pcg_eval_iter": 10,
         "rel_eps": 1E-2,
-        "x_bound_tol": 1E-5,
+        "x_bound_tol": 1E-6,
         "kkt_conv_eps": 1E-5,
         "float_type": torch.float32,
     }
