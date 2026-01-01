@@ -53,7 +53,7 @@ def print_logger(nbatch=1.0, names=[]):
                     print(name, f":\t\t\t {logger['log'][name] / nbatch:.3e}")
 
 
-@torch.compile(disable=disable_compile)
+#@torch.compile(disable=disable_compile)
 def GT_(p, nλn, nt, nf, mu):
     nλt = nλn * nt
     nx = nλn + nλt + nf
@@ -65,7 +65,7 @@ def GT_(p, nλn, nt, nf, mu):
     return λ3 - λ2 + λ0
 
 
-@torch.compile(disable=disable_compile)
+#@torch.compile(disable=disable_compile)
 def G_(p, nλn, nt, nf, mu):
     nλt = nλn * nt
     λn, λt = p[:nλn, :], p[nλn: nλn + nλt, :]
@@ -76,7 +76,7 @@ def G_(p, nλn, nt, nf, mu):
     return torch.vstack([-λn, -p, p])
 
 
-@torch.compile(disable=disable_compile)
+#@torch.compile(disable=disable_compile)
 def GTZSG_(p, ZS, nλn, nt, nf, mu):
     nbatch = p.shape[1]
     nλt = nλn * nt
@@ -102,7 +102,7 @@ def GTZSG_(p, ZS, nλn, nt, nf, mu):
     return λ3 - λ2 + λ0
 
 
-@torch.compile(disable=disable_compile)
+@torch.compile(disable=disable_compile, dynamic=False)
 def Q_(p, nλn, nt, iA, iB, nA, nB, invM, Q):
     batch = p.shape[1]
     nλt = nλn * nt
