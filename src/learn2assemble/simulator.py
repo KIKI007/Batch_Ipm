@@ -64,7 +64,6 @@ def GT_(p, nλn, nt, nf, mu):
     λ3 = p[nλn + nx:]
     return λ3 - λ2 + λ0
 
-
 @torch.compile(disable=disable_compile)
 def G_(p, nλn, nt, nf, mu):
     nλt = nλn * nt
@@ -74,7 +73,6 @@ def G_(p, nλn, nt, nf, mu):
     λn = mu * λn
     λn.index_add_(0, inds, λt, alpha=-1.0)
     return torch.vstack([-λn, -p, p])
-
 
 @torch.compile(disable=disable_compile)
 def GTZSG_(p, ZS, nλn, nt, nf, mu):
@@ -717,7 +715,7 @@ if __name__ == '__main__':
     part_states = part_states[inds, :]
 
     # random
-    part_states = part_states[:n_batch, :].repeat((4, 1))
+    part_states = part_states[:n_batch, :].repeat((8, 1))
     # default_settings['gurobi'] = {}
     default_settings['ipm'] = {
         "n_iter": 25,
