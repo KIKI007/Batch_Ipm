@@ -740,7 +740,7 @@ if __name__ == '__main__':
     v_fp32, stable_fp32 = ipm_simulate_parallel(part_states, ipm_settings_cpu, gpus)
 
     torch.cuda.synchronize()
-    print("time ", perf_counter() - timer)
+    print("time ", (perf_counter() - timer) / stable_fp32.shape[0])
     print(np.sum(stable_fp32).item() / stable_fp32.shape[0])
 
     # # render
