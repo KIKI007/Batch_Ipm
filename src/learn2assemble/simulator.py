@@ -699,7 +699,7 @@ if __name__ == '__main__':
     default_settings['rbe']['mu'] = 0.5
     default_settings["assembly"]["contact_shrink_ratio"] = 0.0  # for robustnessly computing the contact surfaces
 
-    n_batch = 2048
+    n_batch = 512
     torch.manual_seed(0)
     name = "dome"
     parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + f"/{name}")
@@ -716,7 +716,7 @@ if __name__ == '__main__':
     part_states = part_states[inds, :]
 
     # random
-    part_states = part_states[:n_batch, :].repeat((4, 1))
+    part_states = part_states[:n_batch, :]
     # default_settings['gurobi'] = {}
     default_settings['ipm'] = {
         "n_iter": 25,
@@ -724,7 +724,7 @@ if __name__ == '__main__':
         "n_pcg_eval_iter": 10,
         "rel_eps": 1E-2,
         "kkt_conv_eps": 1E-5,
-        "float_type": torch.float64,
+        "float_type": torch.float32,
     }
     reset_timer('contact')
     contacts = compute_assembly_contacts(parts, default_settings)
