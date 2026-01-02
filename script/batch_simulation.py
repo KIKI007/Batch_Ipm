@@ -13,12 +13,8 @@ import learn2assemble
 from os.path import isfile, join, isdir
 from os import listdir
 
-if platform.system() == 'Windows':
-    curriculumn_folder = "D:/curriculum_Thingi10K_12/Thingi10K_12"
-    assembly_folder = "D:/assembly_Thingi10K_12/Thingi10K_12"
-else:
-    curriculumn_folder = "/mnt/d/curriculum_Thingi10K_12/Thingi10K_12/"
-    assembly_folder = "/mnt/d/assembly_Thingi10K_12/Thingi10K_12/"
+curriculumn_folder = "/scratch/assembly/curriculum/"
+assembly_folder = "~/scratch/assembly/Thingi10K_12/"
 
 result_table = []
 
@@ -70,6 +66,8 @@ def test_instance(obj_id, sol_id, ipm=True):
     if not ipm_search_parameters(ipm_settings, part_states[-32:],  0.9):
         return False
 
+    
+
     dataloader = DataLoader(
         TensorDataset(part_states),
         batch_size=n_batch,  # How many samples per batch
@@ -111,12 +109,12 @@ def test_instance(obj_id, sol_id, ipm=True):
 
     return True
 
-sol_files = [f for f in listdir(curriculumn_folder) if isfile(join(curriculumn_folder, f))]
-sol_files.sort()
-sol_files = sol_files[::-1]
-for sol_file in sol_files:
-    obj_id = sol_file.split('_')[2]
-    sol_id = sol_file.split('_')[4].split('.')[0]
-    print(obj_id, sol_id)
-    test_instance(obj_id, sol_id, True)
-# test_instance(1026, 0)
+# sol_files = [f for f in listdir(curriculumn_folder) if isfile(join(curriculumn_folder, f))]
+# sol_files.sort()
+# sol_files = sol_files[::-1]
+# for sol_file in sol_files:
+#     obj_id = sol_file.split('_')[2]
+#     sol_id = sol_file.split('_')[4].split('.')[0]
+#     print(obj_id, sol_id)
+#     test_instance(obj_id, sol_id, True)
+test_instance(1026, 0)
