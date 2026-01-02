@@ -14,7 +14,7 @@ from os.path import isfile, join, isdir
 from os import listdir
 
 curriculumn_folder = "/scratch/assembly/curriculum/"
-assembly_folder = "~/scratch/assembly/Thingi10K_12/"
+assembly_folder = "/scratch/assembly/Thingi10K_12/"
 
 result_table = []
 
