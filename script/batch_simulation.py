@@ -117,4 +117,4 @@ def test_instance(obj_id, sol_id, ipm=True):
 #     sol_id = sol_file.split('_')[4].split('.')[0]
 #     print(obj_id, sol_id)
 #     test_instance(obj_id, sol_id, True)
-test_instance(1026, 0)
+test_instance(1, 0)
