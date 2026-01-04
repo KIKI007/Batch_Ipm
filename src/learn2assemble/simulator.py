@@ -575,6 +575,8 @@ def ipm_simulate(batch_part_states: list[dict], ipm_settings):
     return velocity.cpu(), (velocity_inf_nrm < ipm.velocity_tol).cpu()
 
 def ipm_simulate_parallel_proc(job_id, device, part_states, ipm_settings_cpu, return_dict):
+    if device.type == 'cuda' and ipm_settings_cpu['float_type'] == torch.float32:
+        torch.set_float32_matmul_precision('high')
     ipm_settings = ipm_update_device(ipm_settings_cpu, device)
     velocity, stable_flag = ipm_simulate(part_states, ipm_settings)
     return_dict[job_id] = (velocity, stable_flag)
@@ -592,8 +594,9 @@ def ipm_simulate_parallel(batch_part_states: list[dict], ipm_settings_cpu, devic
         else:
             # last take all
             part_states = batch_part_states[id * n_state_per_process:, :].cpu()
+        device = torch.device(devices[id])
         p = mp.Process(target=ipm_simulate_parallel_proc,
-                       args=(id, devices[id], part_states, ipm_settings_cpu, return_dict))
+                       args=(id, device, part_states, ipm_settings_cpu, return_dict))
         jobs.append(p)
         p.start()
 
