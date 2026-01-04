@@ -745,6 +745,7 @@ if __name__ == '__main__':
     end_timer('init ipm')
 
     ipm_settings_cpu = ipm_update_device(ipm_settings, 'cpu')
+    logger['activate'] = False
 
     if torch.cuda.is_available():
         torch.cuda.synchronize()
