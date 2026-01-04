@@ -745,17 +745,13 @@ if __name__ == '__main__':
     end_timer('init ipm')
 
     ipm_settings_cpu = ipm_update_device(ipm_settings, 'cpu')
-    # gpus = np.arange(torch.cuda.device_count())
-    # print("available gpus:", gpus)
-
-    #v_fp32, stable_fp32 = simulate(parts, contacts, part_states, default_settings)
 
     if torch.cuda.is_available():
         torch.cuda.synchronize()
     timer = perf_counter()
 
-    devices = ["cuda:0", "cuda:1"]
-
+    #devices = ["cuda:0", "cuda:1"]
+    devices = ["cuda:0"]
     v_fp32, stable_fp32 = ipm_simulate_parallel(part_states, ipm_settings_cpu, devices)
     #v_fp32, stable_fp32 = simulate(parts, contacts, part_states, default_settings)
 
