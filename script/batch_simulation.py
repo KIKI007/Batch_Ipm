@@ -71,7 +71,8 @@ def test_instance(obj_id, sol_id, ipm=True):
     part_states = part_states[inds, :]
 
     # search best parameters
-    if not ipm_search_parameters(ipm_settings, part_states[-32:],  0.9):
+    n_test = min(part_states.shape[0], 512)
+    if not ipm_search_parameters(ipm_settings, part_states[-n_test:],  0.95):
         return False
     # update settings
     ipm_settings_cpu = ipm_update_device(ipm_settings, 'cpu')
