@@ -50,21 +50,21 @@ def test_instance(obj_id, sol_id, ipm=True):
     parts = load_assembly_from_files(foldername)
 
     # decided batch size
-    #gpus = np.arange(torch.cuda.device_count())
-    gpus = np.array([0])
+    gpus = np.arange(torch.cuda.device_count())
+    #gpus = np.array([0])
+    n_gpu = gpus.shape[0]
     devices = [f"cuda:{gpu_id}" for gpu_id in gpus]
 
     # for h800
     n_batch = 2048
     if len(parts) > 80:
         n_batch = 1024
-    n_batch *= gpus.shape[0]
+    n_batch *= n_gpu
     print(devices)
 
     # compute contacts
     contacts = compute_assembly_contacts(parts, default_settings)
     ipm_settings = ipm_init(parts, contacts, default_settings)
-    ipm_settings_cpu = ipm_update_device(ipm_settings, 'cpu')
 
     # load curriculum
     filename = os.path.join(curriculumn_folder, f"Thingi10K_12_{obj_id}_sol_{sol_id}.pt")
@@ -77,6 +77,9 @@ def test_instance(obj_id, sol_id, ipm=True):
     # search best parameters
     if not ipm_search_parameters(ipm_settings, part_states[-32:],  0.9):
         return False
+
+    # update settings
+    ipm_settings_cpu = ipm_update_device(ipm_settings, 'cpu')
 
     dataloader = DataLoader(
         TensorDataset(part_states),
