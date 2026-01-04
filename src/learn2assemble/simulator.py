@@ -198,6 +198,14 @@ def ipm_contacts(ipm, parts, contacts, density, boundary_part_ids):
 def ipm_init(parts: list[Trimesh],
              contacts: list[dict],
              settings: dict):
+
+    if platform.system() == "Darwin":
+        default_device = "mps"
+    elif torch.cuda.is_available():
+        default_device = "cuda"
+    else:
+        default_device = "cpu"
+
     update_default_settings(settings,
                             "ipm",
                             {
@@ -208,7 +216,7 @@ def ipm_init(parts: list[Trimesh],
                                 "pcg_rel_eps": 1E-2,
                                 "x_bound_tol": 1E-6,
                                 "float_type": torch.float32,
-                                "device": torch.device("cuda" if torch.cuda.is_available() else "cpu")})
+                                "device": torch.device(default_device)})
 
     ipm = update_default_settings(settings, "ipm", settings["rbe"])
 
@@ -236,6 +244,7 @@ def ipm_init(parts: list[Trimesh],
     H = GT_(G, *rbeG) + ipm['Q']
     if p.device.type == "mps":
         cholesky_H = torch.linalg.cholesky(H.to(device = 'cpu').to(dtype = torch.float64))
+        ipm['cholesky_H'] = torch.cholesky_inverse(cholesky_H).to(device = device, dtype=float_type)
         ipm['invH'] = torch.cholesky_inverse(cholesky_H).to(device = device, dtype=float_type)
     else:
         cholesky_H = torch.linalg.cholesky(H)
@@ -565,15 +574,14 @@ def ipm_simulate(batch_part_states: list[dict], ipm_settings):
     end_timer('ipm')
     return velocity.cpu(), (velocity_inf_nrm < ipm.velocity_tol).cpu()
 
-def ipm_simulate_parallel_proc(gpu_id, part_states, ipm_settings_cpu, return_dict):
-    ipm_settings = ipm_update_device(ipm_settings_cpu, f"cuda:{gpu_id}")
+def ipm_simulate_parallel_proc(job_id, device, part_states, ipm_settings_cpu, return_dict):
+    ipm_settings = ipm_update_device(ipm_settings_cpu, device)
     velocity, stable_flag = ipm_simulate(part_states, ipm_settings)
-    return_dict[gpu_id] = (velocity, stable_flag)
+    return_dict[job_id] = (velocity, stable_flag)
 
-def ipm_simulate_parallel(batch_part_states: list[dict], ipm_settings_cpu, gpu_ids):
-    n_parallel = len(gpu_ids)
+def ipm_simulate_parallel(batch_part_states: list[dict], ipm_settings_cpu, devices):
+    n_parallel = len(devices)
     n_state_per_process = batch_part_states.shape[0] // n_parallel
-
     manager = mp.Manager()
     return_dict = manager.dict()
 
@@ -585,7 +593,7 @@ def ipm_simulate_parallel(batch_part_states: list[dict], ipm_settings_cpu, gpu_i
             # last take all
             part_states = batch_part_states[id * n_state_per_process:, :].cpu()
         p = mp.Process(target=ipm_simulate_parallel_proc,
-                       args=(gpu_ids[id], part_states, ipm_settings_cpu, return_dict))
+                       args=(id, devices[id], part_states, ipm_settings_cpu, return_dict))
         jobs.append(p)
         p.start()
 
@@ -697,7 +705,7 @@ if __name__ == '__main__':
     default_settings['rbe']['mu'] = 0.2
     default_settings["assembly"]["contact_shrink_ratio"] = 0.1  # for robustnessly computing the contact surfaces
 
-    n_batch = 512
+    n_batch = 1024
     torch.manual_seed(0)
     name = "tetris-999"
     parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + f"/{name}")
@@ -724,7 +732,6 @@ if __name__ == '__main__':
         "x_bound_tol": 1E-5,
         "kkt_conv_eps": 1E-4,
         "float_type": torch.float32,
-        "device": "mps"
     }
     reset_timer('contact')
     contacts = compute_assembly_contacts(parts, default_settings)
@@ -735,8 +742,8 @@ if __name__ == '__main__':
     end_timer('init ipm')
 
     ipm_settings_cpu = ipm_update_device(ipm_settings, 'cpu')
-    gpus = np.arange(torch.cuda.device_count())
-    print("available gpus:", gpus)
+    # gpus = np.arange(torch.cuda.device_count())
+    # print("available gpus:", gpus)
 
     #v_fp32, stable_fp32 = simulate(parts, contacts, part_states, default_settings)
 
@@ -744,8 +751,10 @@ if __name__ == '__main__':
         torch.cuda.synchronize()
     timer = perf_counter()
 
-    #v_fp32, stable_fp32 = ipm_simulate_parallel(part_states, ipm_settings_cpu, gpus)
-    v_fp32, stable_fp32 = simulate(parts, contacts, part_states, default_settings)
+    devices = ["gpu:0", "gpu:1"]
+
+    v_fp32, stable_fp32 = ipm_simulate_parallel(part_states, ipm_settings_cpu, devices)
+    #v_fp32, stable_fp32 = simulate(parts, contacts, part_states, default_settings)
 
     if torch.cuda.is_available():
         torch.cuda.synchronize()

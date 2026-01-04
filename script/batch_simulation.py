@@ -48,6 +48,7 @@ def test_instance(obj_id, sol_id, ipm=True):
 
     # decided batch size
     gpus = np.arange(torch.cuda.device_count())
+
     n_batch = 1024
     if len(parts) > 80:
         n_batch = 512
