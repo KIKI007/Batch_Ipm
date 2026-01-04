@@ -15,7 +15,7 @@ logger = {
     'activate': True,
 }
 
-if platform.system() == 'Windows':
+if platform.system() == 'Windows' or platform.system() == 'Darwin':
     disable_compile = True
 else:
     disable_compile = False
@@ -26,7 +26,8 @@ def inf_norm(x):
 
 def reset_timer(name):
     if logger['activate']:
-        torch.cuda.synchronize()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
         if name not in logger['timer']:
             logger['timer'][name] = perf_counter()
             logger['log'][name] = 0.0
@@ -35,7 +36,8 @@ def reset_timer(name):
 
 def end_timer(name):
     if logger['activate']:
-        torch.cuda.synchronize()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
         if 'log' not in logger:
             logger['log'] = {}
         if name in logger['timer']:
@@ -51,7 +53,6 @@ def print_logger(nbatch=1.0, names=[]):
             for name in names:
                 if name in logger['log']:
                     print(name, f":\t\t\t {logger['log'][name] / nbatch:.3e}")
-
 
 @torch.compile(disable=disable_compile)
 def GT_(p, nλn, nt, nf, mu):
@@ -233,9 +234,13 @@ def ipm_init(parts: list[Trimesh],
     ipm['diagQ'] = torch.diagonal(ipm['Q'])
 
     H = GT_(G, *rbeG) + ipm['Q']
-    cholesky_H = torch.linalg.cholesky(H)
-    ipm['cholesky_H'] = cholesky_H
-    ipm['invH'] = torch.cholesky_inverse(cholesky_H)
+    if p.device.type == "mps":
+        cholesky_H = torch.linalg.cholesky(H.to(device = 'cpu').to(dtype = torch.float64))
+        ipm['invH'] = torch.cholesky_inverse(cholesky_H).to(device = device, dtype=float_type)
+    else:
+        cholesky_H = torch.linalg.cholesky(H)
+        ipm['invH'] = torch.cholesky_inverse(cholesky_H)
+        ipm['cholesky_H'] = cholesky_H
 
     # auto parameters
     settings["ipm"]["Ccp"] = 1.2 * abs(torch.sum(settings['ipm']['g']).item())
@@ -264,15 +269,6 @@ def ipm_search_parameters(ipm_settings: dict, part_states, acc_tol=0.9):
         ipm_settings["n_pcg_iter"] = 400
         print(f"Failed to find pcg iter with a maximum {best_acc: .2f} success rate")
         return False
-
-def ipm_init_parallel(ipm_settings,
-                      gpu_ids: list):
-
-    list_ipm_settings = []
-    for gpu_id in gpu_ids:
-        list_ipm_settings.append(ipm_update_device(ipm_settings, device=f"cuda:{gpu_id}"))
-
-    return list_ipm_settings
 
 def ipm_index_mapping(batch_part_states, iAs, iBs, nλn, device):
     if batch_part_states.ndim == 1:
@@ -355,8 +351,10 @@ def ipm_evaluate_result(ipm, xclip, ps):
 def ipm_start_solve(ipm, h, q):
     rbe = ipm.nλn, ipm.nt, ipm.nf, ipm.mu
     b = GT_(h, *rbe) - q
-    x = torch.cholesky_solve(b, ipm.cholesky_H)
-    #x = ipm.invH @ b
+    if h.device.type == 'mps':
+        x = ipm.invH @ b # for mac
+    else:
+        x = torch.cholesky_solve(b, ipm.cholesky_H)
 
     oldz = G_(x, *rbe) - h
     alpha_p = torch.max(oldz, 0).values
@@ -379,12 +377,8 @@ def ipm_kkt_res(ipm, q, h, x, s, z):
 
 def ipm_precond(ipm, s, z):
     ZS = z / s
-    #rbe = ipm.nλn, ipm.nt, ipm.nf, ipm.mu
-    #I = torch.eye(ipm.GG.shape[1], device=s.device, dtype=s.dtype)
-    #diagG = torch.diagonal(GTZSG_(I, ZS, *rbe))
     diagG = torch.einsum("ji, jb -> ib", ipm.GG, ZS)
     invM = diagG + ipm.diagQ[:, None]
-    #invM = ipm.diagQ[:, None].repeat((1, s.shape[1]))
     invM = 1.0 / invM
     return invM
 
@@ -569,12 +563,12 @@ def ipm_simulate(batch_part_states: list[dict], ipm_settings):
     xclip = torch.clip(result_x, xl, xu)
     velocity, velocity_inf_nrm = ipm_evaluate_result(ipm, xclip, ps)
     end_timer('ipm')
-    return velocity, (velocity_inf_nrm < ipm.velocity_tol)
+    return velocity.cpu(), (velocity_inf_nrm < ipm.velocity_tol).cpu()
 
 def ipm_simulate_parallel_proc(gpu_id, part_states, ipm_settings_cpu, return_dict):
     ipm_settings = ipm_update_device(ipm_settings_cpu, f"cuda:{gpu_id}")
     velocity, stable_flag = ipm_simulate(part_states, ipm_settings)
-    return_dict[gpu_id] = (velocity.cpu(), stable_flag.cpu())
+    return_dict[gpu_id] = (velocity, stable_flag)
 
 def ipm_simulate_parallel(batch_part_states: list[dict], ipm_settings_cpu, gpu_ids):
     n_parallel = len(gpu_ids)
@@ -599,13 +593,13 @@ def ipm_simulate_parallel(batch_part_states: list[dict], ipm_settings_cpu, gpu_i
     stable_flag = []
     for proc in jobs:
         proc.join()
-
     for id in range(n_parallel):
-        velocity.append(return_dict[id][0].numpy())
-        stable_flag.append(return_dict[id][1].numpy())
+        velocity.append(return_dict[id][0])
+        stable_flag.append(return_dict[id][1])
 
-    velocity = np.hstack(velocity)
-    stable_flag = np.hstack(stable_flag)
+    velocity = torch.hstack(velocity)
+    stable_flag = torch.hstack(stable_flag)
+
     return velocity, stable_flag
 
 def init_gurobi(parts, contacts, settings: dict):
@@ -664,11 +658,11 @@ def simulate_gurobi(batch_part_states: list[dict],
         else:
             flags.append(False)
             vs.append(np.zeros(rbe.nf))
-    vs = np.vstack(vs)
+    vs = torch.tensor(vs, device ="cpu", dtype=torch.float32)
     vs = vs.T
+    flags = torch.tensor(flags, device ="cpu", dtype=torch.bool)
     end_timer('gurobi')
-    return vs, np.array(flags)
-
+    return vs, flags
 
 def simulate(parts: list[Trimesh],
              contacts: list[dict],
@@ -687,7 +681,7 @@ def simulate(parts: list[Trimesh],
         if not ipm_computed:
             ipm_init(parts, contacts, settings)
         x, flag = ipm_simulate(batch_part_states, settings["ipm"])
-        return x.cpu().numpy(), flag.cpu().numpy()
+        return x, flag
 
 if __name__ == '__main__':
     from learn2assemble import ASSEMBLY_RESOURCE_DIR, default_settings, RESOURCE_DIR
@@ -700,10 +694,10 @@ if __name__ == '__main__':
     except RuntimeError:
         exit(0)
 
-    default_settings['rbe']['mu'] = 0.5
-    default_settings["assembly"]["contact_shrink_ratio"] = 0.0  # for robustnessly computing the contact surfaces
+    default_settings['rbe']['mu'] = 0.2
+    default_settings["assembly"]["contact_shrink_ratio"] = 0.1  # for robustnessly computing the contact surfaces
 
-    n_batch = 1
+    n_batch = 512
     torch.manual_seed(0)
     name = "tetris-999"
     parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + f"/{name}")
@@ -730,6 +724,7 @@ if __name__ == '__main__':
         "x_bound_tol": 1E-5,
         "kkt_conv_eps": 1E-4,
         "float_type": torch.float32,
+        "device": "mps"
     }
     reset_timer('contact')
     contacts = compute_assembly_contacts(parts, default_settings)
@@ -745,13 +740,19 @@ if __name__ == '__main__':
 
     #v_fp32, stable_fp32 = simulate(parts, contacts, part_states, default_settings)
 
-    torch.cuda.synchronize()
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
     timer = perf_counter()
+
     #v_fp32, stable_fp32 = ipm_simulate_parallel(part_states, ipm_settings_cpu, gpus)
     v_fp32, stable_fp32 = simulate(parts, contacts, part_states, default_settings)
-    torch.cuda.synchronize()
-    print("time ", (perf_counter() - timer) / stable_fp32.shape[0])
-    print(np.sum(stable_fp32).item() / stable_fp32.shape[0])
+
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    sim_time = perf_counter() - timer
+
+    print("time ", sim_time / stable_fp32.shape[0])
+    print(torch.sum(stable_fp32).item() / stable_fp32.shape[0])
     print_logger(1)
 
     #render
