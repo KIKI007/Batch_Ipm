@@ -751,7 +751,7 @@ if __name__ == '__main__':
         torch.cuda.synchronize()
     timer = perf_counter()
 
-    devices = ["gpu:0", "gpu:1"]
+    devices = ["cuda:0", "cuda:1"]
 
     v_fp32, stable_fp32 = ipm_simulate_parallel(part_states, ipm_settings_cpu, devices)
     #v_fp32, stable_fp32 = simulate(parts, contacts, part_states, default_settings)
