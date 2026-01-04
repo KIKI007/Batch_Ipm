@@ -50,9 +50,11 @@ def test_instance(obj_id, sol_id, ipm=True):
     # decided batch size
     gpus = np.arange(torch.cuda.device_count())
     devices = [f"cuda:{gpu_id}" for gpu_id in gpus]
-    n_batch = 1024
+
+    # for h800
+    n_batch = 2048
     if len(parts) > 80:
-        n_batch = 512
+        n_batch = 1024
     n_batch *= gpus.shape[0]
     print(devices)
 
@@ -90,8 +92,8 @@ def test_instance(obj_id, sol_id, ipm=True):
             padding[: part_states.shape[0], :] = part_states
             _, stable_fp32 = ipm_simulate_parallel(padding, ipm_settings_cpu, devices)
             stable_fp32 = stable_fp32[: part_states.shape[0]]
-            tot_success += torch.sum(stable_fp32)
-            progress.set_postfix_str(torch.sum(stable_fp32) / stable_fp32.shape[0])
+            tot_success += torch.sum(stable_fp32).item()
+            progress.set_postfix_str(torch.sum(stable_fp32).item() / stable_fp32.shape[0])
             progress.update()
     print("success rate:\t", tot_success / inds.shape[0])
 
