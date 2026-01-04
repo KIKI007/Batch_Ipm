@@ -1,5 +1,7 @@
 from time import perf_counter
 
+import numpy as np
+
 from learn2assemble import default_settings
 from learn2assemble.assembly import load_assembly_from_files, compute_assembly_contacts
 from learn2assemble.simulator import ipm_init, ipm_search_parameters, ipm_update_device, ipm_simulate_parallel
@@ -49,7 +51,7 @@ def test_instance(obj_id, sol_id, ipm=True):
 
     # decided batch size
     #gpus = np.arange(torch.cuda.device_count())
-    gpus = [0]
+    gpus = np.array([0])
     devices = [f"cuda:{gpu_id}" for gpu_id in gpus]
 
     # for h800
