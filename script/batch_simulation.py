@@ -51,7 +51,7 @@ def test_instance(obj_id, sol_id, ipm=True):
 
     # decided batch size
     gpus = np.arange(torch.cuda.device_count())
-    #gpus = np.array([0])
+    gpus = np.array([0])
     n_gpu = gpus.shape[0]
     devices = [f"cuda:{gpu_id}" for gpu_id in gpus]
 
@@ -77,7 +77,6 @@ def test_instance(obj_id, sol_id, ipm=True):
     # search best parameters
     if not ipm_search_parameters(ipm_settings, part_states[-32:],  0.9):
         return False
-
     # update settings
     ipm_settings_cpu = ipm_update_device(ipm_settings, 'cpu')
 
@@ -129,13 +128,13 @@ if __name__ == "__main__":
         mp.set_start_method('spawn', force=True)
     except RuntimeError:
         exit(0)
-    torch.compiler.reset()
-# sol_files = [f for f in listdir(curriculumn_folder) if isfile(join(curriculumn_folder, f))]
-# sol_files.sort()
-# sol_files = sol_files[::-1]
-# for sol_file in sol_files:
-#     obj_id = sol_file.split('_')[2]
-#     sol_id = sol_file.split('_')[4].split('.')[0]
-#     print(obj_id, sol_id)
-#     test_instance(obj_id, sol_id, True)
+    #torch.compiler.reset()
+    # sol_files = [f for f in listdir(curriculumn_folder) if isfile(join(curriculumn_folder, f))]
+    # sol_files.sort()
+    # sol_files = sol_files[::-1]
+    # for sol_file in sol_files:
+    #     obj_id = sol_file.split('_')[2]
+    #     sol_id = sol_file.split('_')[4].split('.')[0]
+    #     print(obj_id, sol_id)
+    #     test_instance(obj_id, sol_id, True)
     test_instance(1, 0)
