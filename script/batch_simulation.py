@@ -51,16 +51,13 @@ def test_instance(obj_id, sol_id, ipm=True):
 
     # decided batch size
     gpus = np.arange(torch.cuda.device_count())
-    gpus = np.array([0])
+    #gpus = np.array([0])
     n_gpu = gpus.shape[0]
     devices = [f"cuda:{gpu_id}" for gpu_id in gpus]
 
     # for h800
-    n_batch = 2048
-    if len(parts) > 80:
-        n_batch = 1024
+    n_batch = 4096
     n_batch *= n_gpu
-    print(devices)
 
     # compute contacts
     contacts = compute_assembly_contacts(parts, default_settings)
@@ -72,7 +69,6 @@ def test_instance(obj_id, sol_id, ipm=True):
     inds = torch.sum(part_states, dim=1).cpu().numpy()
     inds = torch.tensor(np.argsort(inds).tolist())
     part_states = part_states[inds, :]
-    part_states = part_states[:4096*2, :]
 
     # search best parameters
     if not ipm_search_parameters(ipm_settings, part_states[-32:],  0.9):
@@ -91,6 +87,7 @@ def test_instance(obj_id, sol_id, ipm=True):
     start_timer = perf_counter()
 
     tot_success = 0
+    print("n_state:\t", inds.shape[0])
     with tqdm(total=len(dataloader)) as progress:
         for part_states in dataloader:
             part_states = part_states[0]
@@ -128,13 +125,11 @@ if __name__ == "__main__":
         mp.set_start_method('spawn', force=True)
     except RuntimeError:
         exit(0)
-    #torch.compiler.reset()
-    # sol_files = [f for f in listdir(curriculumn_folder) if isfile(join(curriculumn_folder, f))]
-    # sol_files.sort()
-    # sol_files = sol_files[::-1]
-    # for sol_file in sol_files:
-    #     obj_id = sol_file.split('_')[2]
-    #     sol_id = sol_file.split('_')[4].split('.')[0]
-    #     print(obj_id, sol_id)
-    #     test_instance(obj_id, sol_id, True)
-    test_instance(1, 0)
+    sol_files = [f for f in listdir(curriculumn_folder) if isfile(join(curriculumn_folder, f))]
+    sol_files.sort()
+    sol_files = sol_files[::-1]
+    for sol_file in sol_files[:10]:
+        obj_id = sol_file.split('_')[2]
+        sol_id = sol_file.split('_')[4].split('.')[0]
+        print(obj_id, sol_id)
+        test_instance(obj_id, sol_id, True)
