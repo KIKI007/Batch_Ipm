@@ -15,13 +15,15 @@ import learn2assemble
 import torch.multiprocessing as mp
 from os.path import isfile, join, isdir
 from os import listdir
+import wandb
 
 curriculumn_folder = "/scratch/assembly/curriculum/"
 assembly_folder = "/scratch/assembly/Thingi10K_12/"
 
 result_table = []
 
-def test_instance(obj_id, sol_id, devices = None):
+
+def test_instance(obj_id, sol_id, devices=None):
     learn2assemble.simulator.logger = {
         'timer': {},
         'log': {},
@@ -69,7 +71,7 @@ def test_instance(obj_id, sol_id, devices = None):
 
     # search best parameters
     n_test = min(part_states.shape[0], 512)
-    if not ipm_search_parameters(ipm_settings, part_states[-n_test:],  0.95):
+    if not ipm_search_parameters(ipm_settings, part_states[-n_test:], 0.95):
         return False
     # update settings
     ipm_settings_cpu = ipm_update_device(ipm_settings, 'cpu')
@@ -111,10 +113,18 @@ def test_instance(obj_id, sol_id, devices = None):
                          "acc": tot_success / inds.shape[0]}
                         )
 
+    # log wandb
+    wandb.log({"n_parts": len(parts),
+               "n_states": inds.shape[0],
+               "time": perf_counter() - start_timer,
+               "acc": tot_success / inds.shape[0]}
+              )
+
     with open('result.json', 'w') as f:
         json.dump(result_table, f, indent=4)
 
     return True
+
 
 if __name__ == "__main__":
     os.environ['MKL_THREADING_LAYER'] = 'GNU'
@@ -127,6 +137,10 @@ if __name__ == "__main__":
     devices = [f"cuda:{gpu_id}" for gpu_id in gpus]
     print("devices:", devices)
 
+    # setup wandb
+    wandb.login(key="1c4a274de42ea0326b6ac75651a33f2b7cb2d217", relogin=True, force=True)
+    run = wandb.init(project="Simulation", name="batch")
+
     sol_files = [f for f in listdir(curriculumn_folder) if isfile(join(curriculumn_folder, f))]
     sol_files.sort()
     sol_files = sol_files[::-1]
@@ -134,4 +148,4 @@ if __name__ == "__main__":
         obj_id = sol_file.split('_')[2]
         sol_id = sol_file.split('_')[4].split('.')[0]
         print(obj_id, sol_id)
-        test_instance(obj_id, sol_id, devices = devices)
+        test_instance(obj_id, sol_id, devices=devices)
