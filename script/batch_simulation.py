@@ -127,6 +127,7 @@ if __name__ == "__main__":
         mp.set_start_method('spawn', force=True)
     except RuntimeError:
         exit(0)
+    torch.compiler.reset()
 # sol_files = [f for f in listdir(curriculumn_folder) if isfile(join(curriculumn_folder, f))]
 # sol_files.sort()
 # sol_files = sol_files[::-1]
