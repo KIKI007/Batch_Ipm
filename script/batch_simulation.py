@@ -67,7 +67,7 @@ def test_instance(obj_id, sol_id, ipm=True):
     filename = os.path.join(curriculumn_folder, f"Thingi10K_12_{obj_id}_sol_{sol_id}.pt")
     part_states = torch.load(filename)['input']
     inds = torch.sum(part_states, dim=1).cpu().numpy()
-    inds = torch.tensor(np.argsort(inds).tolist()[::-1])
+    inds = torch.tensor(np.argsort(inds).tolist())
     part_states = part_states[inds, :]
 
     # search best parameters
