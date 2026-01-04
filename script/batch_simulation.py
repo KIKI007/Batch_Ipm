@@ -10,6 +10,7 @@ import torch
 import platform
 import os
 import learn2assemble
+import torch.multiprocessing as mp
 from os.path import isfile, join, isdir
 from os import listdir
 
@@ -112,6 +113,11 @@ def test_instance(obj_id, sol_id, ipm=True):
 
     return True
 
+if __name__ == "__main__":
+    try:
+        mp.set_start_method('spawn', force=True)
+    except RuntimeError:
+        exit(0)
 # sol_files = [f for f in listdir(curriculumn_folder) if isfile(join(curriculumn_folder, f))]
 # sol_files.sort()
 # sol_files = sol_files[::-1]
@@ -120,4 +126,4 @@ def test_instance(obj_id, sol_id, ipm=True):
 #     sol_id = sol_file.split('_')[4].split('.')[0]
 #     print(obj_id, sol_id)
 #     test_instance(obj_id, sol_id, True)
-test_instance(1, 0)
+    test_instance(1, 0)
