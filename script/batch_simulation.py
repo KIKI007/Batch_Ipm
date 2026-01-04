@@ -48,7 +48,8 @@ def test_instance(obj_id, sol_id, ipm=True):
     parts = load_assembly_from_files(foldername)
 
     # decided batch size
-    gpus = np.arange(torch.cuda.device_count())
+    #gpus = np.arange(torch.cuda.device_count())
+    gpus = [0]
     devices = [f"cuda:{gpu_id}" for gpu_id in gpus]
 
     # for h800
@@ -84,6 +85,7 @@ def test_instance(obj_id, sol_id, ipm=True):
 
     torch.cuda.synchronize()
     start_timer = perf_counter()
+
     tot_success = 0
     with tqdm(total=len(dataloader)) as progress:
         for part_states in dataloader:
@@ -96,11 +98,10 @@ def test_instance(obj_id, sol_id, ipm=True):
             tot_success += torch.sum(stable_fp32).item()
             progress.set_postfix_str(torch.sum(stable_fp32).item() / stable_fp32.shape[0])
             progress.update()
-    print("success rate:\t", tot_success / inds.shape[0])
 
     torch.cuda.synchronize()
     print("time:\t", perf_counter() - start_timer)
-    #print_logger(inds.shape[0], ['ipm', 'gurobi'])
+    print("success rate:\t", tot_success / inds.shape[0])
     print("\n")
 
     result_table.append({"name": obj_id,
