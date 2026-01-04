@@ -53,6 +53,7 @@ def test_instance(obj_id, sol_id, ipm=True):
     if len(parts) > 80:
         n_batch = 512
     n_batch *= gpus.shape[0]
+    print(devices)
 
     # compute contacts
     contacts = compute_assembly_contacts(parts, default_settings)
@@ -83,13 +84,13 @@ def test_instance(obj_id, sol_id, ipm=True):
     with tqdm(total=len(dataloader)) as progress:
         for part_states in dataloader:
             part_states = part_states[0]
-            padding = torch.zeros((n_batch, len(parts)), device=part_states.device, dtype=torch.long)
+            padding = torch.zeros((n_batch, len(parts)), device='cpu', dtype=torch.long)
             padding[:, ipm_settings["boundary_part_ids"]] = 2
             padding[: part_states.shape[0], :] = part_states
-            _, stable_fp32 = ipm_simulate_parallel(part_states, ipm_settings_cpu, devices)
+            _, stable_fp32 = ipm_simulate_parallel(padding, ipm_settings_cpu, devices)
             stable_fp32 = stable_fp32[: part_states.shape[0]]
-            tot_success += np.sum(stable_fp32)
-            progress.set_postfix_str(np.sum(stable_fp32) / stable_fp32.shape[0])
+            tot_success += torch.sum(stable_fp32)
+            progress.set_postfix_str(torch.sum(stable_fp32) / stable_fp32.shape[0])
             progress.update()
     print("success rate:\t", tot_success / inds.shape[0])
 
