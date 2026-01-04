@@ -123,6 +123,8 @@ def test_instance(obj_id, sol_id, ipm=True):
     return True
 
 if __name__ == "__main__":
+    os.environ['MKL_THREADING_LAYER'] = 'GNU'
+    os.environ['MKL_SERVICE_FORCE_INTEL'] = '1'
     try:
         mp.set_start_method('spawn', force=True)
     except RuntimeError:
