@@ -56,7 +56,7 @@ def test_instance(obj_id, sol_id, ipm=True):
     devices = [f"cuda:{gpu_id}" for gpu_id in gpus]
 
     # for h800
-    n_batch = 4096
+    n_batch = 2048
     n_batch *= n_gpu
 
     # compute contacts
@@ -129,7 +129,7 @@ if __name__ == "__main__":
     sol_files = [f for f in listdir(curriculumn_folder) if isfile(join(curriculumn_folder, f))]
     sol_files.sort()
     sol_files = sol_files[::-1]
-    for sol_file in sol_files[:10]:
+    for sol_file in sol_files:
         obj_id = sol_file.split('_')[2]
         sol_id = sol_file.split('_')[4].split('.')[0]
         print(obj_id, sol_id)
