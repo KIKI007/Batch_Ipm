@@ -21,7 +21,7 @@ assembly_folder = "/scratch/assembly/Thingi10K_12/"
 
 result_table = []
 
-def test_instance(obj_id, sol_id, ipm=True):
+def test_instance(obj_id, sol_id, devices = None):
     learn2assemble.simulator.logger = {
         'timer': {},
         'log': {},
@@ -50,10 +50,10 @@ def test_instance(obj_id, sol_id, ipm=True):
     parts = load_assembly_from_files(foldername)
 
     # decided batch size
-    gpus = np.arange(torch.cuda.device_count())
-    #gpus = np.array([0])
-    n_gpu = gpus.shape[0]
-    devices = [f"cuda:{gpu_id}" for gpu_id in gpus]
+    if devices is None:
+        gpus = np.arange(torch.cuda.device_count())
+        devices = [f"cuda:{gpu_id}" for gpu_id in gpus]
+    n_gpu = len(devices)
 
     # for h800
     n_batch = 2048
@@ -126,6 +126,10 @@ if __name__ == "__main__":
         mp.set_start_method('spawn', force=True)
     except RuntimeError:
         exit(0)
+    gpus = np.arange(torch.cuda.device_count())
+    devices = [f"cuda:{gpu_id}" for gpu_id in gpus]
+    print("devices:", devices)
+
     sol_files = [f for f in listdir(curriculumn_folder) if isfile(join(curriculumn_folder, f))]
     sol_files.sort()
     sol_files = sol_files[::-1]
@@ -133,4 +137,4 @@ if __name__ == "__main__":
         obj_id = sol_file.split('_')[2]
         sol_id = sol_file.split('_')[4].split('.')[0]
         print(obj_id, sol_id)
-        test_instance(obj_id, sol_id, True)
+        test_instance(obj_id, sol_id, devices = devices)
