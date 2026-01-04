@@ -33,9 +33,6 @@ def test_instance(obj_id, sol_id, devices = None):
     default_settings["assembly"]["contact_shrink_ratio"] = 0.1  # for robustnessly computing the contact surfaces
 
     # ipm
-    if not ipm:
-        default_settings['gurobi'] = {}
-
     default_settings['ipm'] = {
         "n_iter": 30,
         "n_pcg_eval_iter": 10,
