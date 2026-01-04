@@ -764,20 +764,20 @@ if __name__ == '__main__':
     print(torch.sum(stable_fp32).item() / stable_fp32.shape[0])
     print_logger(1)
 
-    #render
-    import polyscope as ps
-
-    init_polyscope()
-    t = 0
-
-    def callback():
-        global t
-        changed, t = psim.SliderFloat("time", v=t, v_min=0, v_max=1)
-        if changed:
-            draw_assembly_motion(parts, part_states[0], v_fp32[:, 0] * t)
-
-
-    draw_contacts(contacts, part_states[0])
-    draw_assembly_motion(parts, part_states[0], v_fp32[:, 0] * t)
-    ps.set_user_callback(callback)
-    ps.show()
+    # #render
+    # import polyscope as ps
+    #
+    # init_polyscope()
+    # t = 0
+    #
+    # def callback():
+    #     global t
+    #     changed, t = psim.SliderFloat("time", v=t, v_min=0, v_max=1)
+    #     if changed:
+    #         draw_assembly_motion(parts, part_states[0], v_fp32[:, 0] * t)
+    #
+    #
+    # draw_contacts(contacts, part_states[0])
+    # draw_assembly_motion(parts, part_states[0], v_fp32[:, 0] * t)
+    # ps.set_user_callback(callback)
+    # ps.show()
