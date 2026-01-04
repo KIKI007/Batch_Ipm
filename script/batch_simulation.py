@@ -69,7 +69,7 @@ def test_instance(obj_id, sol_id, ipm=True):
     inds = torch.sum(part_states, dim=1).cpu().numpy()
     inds = torch.tensor(np.argsort(inds).tolist())
     part_states = part_states[inds, :]
-    part_states = part_states[:4096, :]
+    part_states = part_states[:4096*2, :]
 
     # search best parameters
     if not ipm_search_parameters(ipm_settings, part_states[-32:],  0.9):
