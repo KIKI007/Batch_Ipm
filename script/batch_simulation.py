@@ -2,7 +2,7 @@ from time import perf_counter
 
 from learn2assemble import default_settings
 from learn2assemble.assembly import load_assembly_from_files, compute_assembly_contacts
-from learn2assemble.simulator import ipm_init, print_logger, ipm_search_parameters
+from learn2assemble.simulator import ipm_init, ipm_search_parameters, ipm_update_device, ipm_simulate_parallel
 from learn2assemble.render import *
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
@@ -57,6 +57,7 @@ def test_instance(obj_id, sol_id, ipm=True):
     # compute contacts
     contacts = compute_assembly_contacts(parts, default_settings)
     ipm_settings = ipm_init(parts, contacts, default_settings)
+    ipm_settings_cpu = ipm_update_device(ipm_settings, 'cpu')
 
     # load curriculum
     filename = os.path.join(curriculumn_folder, f"Thingi10K_12_{obj_id}_sol_{sol_id}.pt")
