@@ -76,7 +76,7 @@ def test_instance(sol_file, ipm_settings_cpu):
     learn2assemble.simulator.logger = {
         'timer': {},
         'log': {},
-        'activate': True
+        'activate': False
     }
 
     ipm_settings = ipm_update_device(ipm_settings_cpu, 'cuda')
@@ -116,7 +116,7 @@ def test_instance(sol_file, ipm_settings_cpu):
             progress.update()
 
     torch.cuda.synchronize()
-    print("time:\t", perf_counter() - start_timer)
+    print("time:\t", (perf_counter() - start_timer) / n_batch)
     print("success rate:\t", tot_success / n_state)
     print("\n")
 
@@ -124,13 +124,12 @@ def test_instance(sol_file, ipm_settings_cpu):
                          "sol_id": sol_id,
                          "n_parts": ipm_settings['n_part'],
                          "n_states": n_state,
-                         "time": perf_counter() - start_timer,
+                         "time": (perf_counter() - start_timer) / n_batch,
                          "acc": tot_success / n_state}
                         )
 
     with open('result.json', 'w') as f:
         json.dump(result_table, f, indent=4)
-    print_logger(1)
 
     return True
 
