@@ -138,8 +138,7 @@ def test_instance(sol_file, ipm_settings_cpu):
     print("success rate:\t", tot_success / n_state)
     print("\n")
 
-    result_table.append({"name": obj_id,
-                         "sol_id": sol_id,
+    result_table.append({"name": sol_file,
                          "n_parts": ipm_settings['n_part'],
                          "n_states": n_state,
                          "time": (perf_counter() - start_timer) / n_batch,
