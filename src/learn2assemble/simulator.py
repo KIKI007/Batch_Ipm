@@ -18,7 +18,7 @@ logger = {
 if platform.system() == 'Windows' or platform.system() == 'Darwin':
     disable_compile = True
 else:
-    disable_compile = False
+    disable_compile = True
 
 def inf_norm(x):
     return torch.max(torch.abs(x), dim=0).values
@@ -224,30 +224,51 @@ def ipm_init(parts: list[Trimesh],
     ipm['n_part'] = len(parts)
     ipm['boundary_part_ids'] = settings['env']['boundary_part_ids']
     ipm['density'] = compute_best_density(parts, ipm['boundary_part_ids'])
+
+    reset_timer("ipm_contacts")
     ipm_contacts(ipm, parts, contacts, ipm['density'], ipm['boundary_part_ids'])
+    end_timer("ipm_contacts")
+
 
     # set low precision multiple
     torch.set_float32_matmul_precision('high')
 
     # compute pre-conditioner
+    reset_timer("init pre-conditioner")
     nx = ipm['nλn'] * (ipm["nt"] + 1) + ipm["nf"]
     rbeG = ipm["nλn"], ipm["nt"], ipm["nf"], ipm["mu"]
     rbeQ = ipm['nλn'], ipm['nt'], ipm['iAs'], ipm['iBs'], ipm['nAs'], ipm['nBs'], ipm['invM']
     p = torch.eye(nx, device=device, dtype=float_type)
+
+    reset_timer("G")
     G = G_(p, *rbeG)
+    end_timer("G")
+
+    reset_timer("GG")
     ipm['GG'] = G * G
+    end_timer("GG")
+
+    reset_timer("Q")
     ipm['Q'] = Q_(p, *rbeQ)
     ipm['diagQ'] = torch.diagonal(ipm['Q'])
+    end_timer("Q")
 
+    reset_timer("H")
     H = GT_(G, *rbeG) + ipm['Q']
+    end_timer("H")
+
+    end_timer("init pre-conditioner")
+
+    reset_timer("cholesky")
     if p.device.type == "mps":
         cholesky_H = torch.linalg.cholesky(H.to(device = 'cpu').to(dtype = torch.float64))
         ipm['cholesky_H'] = torch.cholesky_inverse(cholesky_H).to(device = device, dtype=float_type)
         ipm['invH'] = torch.cholesky_inverse(cholesky_H).to(device = device, dtype=float_type)
     else:
         cholesky_H = torch.linalg.cholesky(H)
-        ipm['invH'] = torch.cholesky_inverse(cholesky_H)
+        #ipm['invH'] = torch.cholesky_inverse(cholesky_H)
         ipm['cholesky_H'] = cholesky_H
+    end_timer("cholesky")
 
     # auto parameters
     settings["ipm"]["Ccp"] = 1.2 * abs(torch.sum(settings['ipm']['g']).item())
