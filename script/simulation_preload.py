@@ -176,9 +176,8 @@ def parallel_load_assembly(sol_files, n_worker = 64):
             progress.update()
 
     # exit
-    for sol_file in sol_files:
+    for p in jobs:
         in_.put(None)
-
     for p in jobs:
         p.join()
 
