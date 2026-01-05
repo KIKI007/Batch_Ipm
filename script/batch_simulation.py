@@ -4,8 +4,9 @@ import numpy as np
 
 from learn2assemble import default_settings
 from learn2assemble.assembly import load_assembly_from_files, compute_assembly_contacts
-from learn2assemble.simulator_parallel import ipm_simulate_parallel
-from learn2assemble.simulator import ipm_init, ipm_search_parameters, ipm_update_device, ipm_compile_functions
+from learn2assemble.simulator_parallel import ipm_simulate_parallel, ipm_init_simulate_parallel, ipm_split_states, \
+    ipm_terminate, ipm_search_parameters_parallel
+from learn2assemble.simulator import ipm_init, ipm_update_device
 from learn2assemble.render import *
 import torch
 import os
@@ -67,7 +68,7 @@ def test_instance(obj_id, sol_id, devices=None):
     contacts = compute_assembly_contacts(parts, default_settings)
     ipm_settings = ipm_init(parts, contacts, default_settings)
     ipm_settings_cpu = ipm_update_device(ipm_settings, 'cpu')
-    ipm_compile_functions(ipm_settings)
+    simulators = ipm_init_simulate_parallel(ipm_settings_cpu, devices, n_batch)
 
     # load curriculum
     filename = os.path.join(curriculumn_folder, f"Thingi10K_12_{obj_id}_sol_{sol_id}.pt")
@@ -77,12 +78,12 @@ def test_instance(obj_id, sol_id, devices=None):
 
     # search best parameters
     # update settings
-    if not ipm_search_parameters(ipm_settings, part_states, 512, 0.9):
+    if not ipm_search_parameters_parallel(ipm_settings_cpu, part_states, simulators, 512, 0.9):
         return False
-    else:
-        ipm_settings_cpu['n_pcg_iter'] = ipm_settings_cpu['n_pcg_iter']
 
-    _, _, avg_sim_time, avg_success_rate = ipm_simulate_parallel(part_states, ipm_settings_cpu, devices, n_batch)
+    sim_datas = ipm_split_states(ipm_settings_cpu, simulators, n_batch)
+    _, _, avg_sim_time, avg_sucess_rate = ipm_simulate_parallel(sim_datas, simulators)
+    ipm_terminate(simulators)
 
     result_table.append({"name": obj_id,
                          "sol_id": sol_id,

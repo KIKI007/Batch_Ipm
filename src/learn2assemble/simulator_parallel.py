@@ -1,5 +1,19 @@
+import numpy as np
+
 from learn2assemble.simulator import *
 from tqdm import tqdm
+
+def ipm_warmup(batch_part_states: torch.tensor, settings: dict):
+    active = logger['activate']
+    logger['activate'] = False
+    n_iter = settings['n_iter']
+    n_pcg_iter = settings['n_pcg_iter']
+    settings["n_iter"] = 1
+    settings["n_pcg_iter"] = 1
+    ipm_simulate(batch_part_states, settings)
+    settings["n_pcg_iter"] = n_pcg_iter
+    settings["n_iter"] = n_iter
+    logger['activate'] = active
 
 def ipm_simulate_parallel_proc(device_str,
                                ipm_settings_cpu,
@@ -10,7 +24,6 @@ def ipm_simulate_parallel_proc(device_str,
     torch.set_float32_matmul_precision('high')
     device = torch.device(device_str)
     ipm_settings = ipm_update_device(ipm_settings_cpu, device)
-    ipm_compile_functions(ipm_settings)
     warm_states = ipm_empty_states(ipm_settings['n_part'], ipm_settings['boundary_part_ids'], n_batch)
     ipm_warmup(warm_states, ipm_settings)
     out_queue.put(f"{device_str}: Warmup Done")
@@ -20,19 +33,17 @@ def ipm_simulate_parallel_proc(device_str,
         data = in_queue.get()
         if data is None:
             break
-        job_id, batch_part_states, n_sub_states = data
+        job_id, batch_part_states, n_sub_states, n_pcg_iter = data
+        ipm_settings['n_pcg_iter'] = n_pcg_iter
         velocity, flag = ipm_simulate(batch_part_states, ipm_settings)
         velocity = velocity[:n_sub_states, :]
         flag = flag[:n_sub_states]
         out_queue.put((job_id, velocity.cpu(), flag.cpu()))
     return
 
-def ipm_simulate_parallel(batch_part_states: torch.tensor,
-                          ipm_settings_cpu,
-                          devices: list[str],
-                          n_batch):
-    batch_part_states = batch_part_states.to(device='cpu')
-
+def ipm_init_simulate_parallel(ipm_settings_cpu,
+                               devices: list[str],
+                               n_batch):
     n_parallel = len(devices)
     manager = mp.Manager()
 
@@ -59,16 +70,16 @@ def ipm_simulate_parallel(batch_part_states: torch.tensor,
         print(done)
         num_done += 1
 
-    # start sending data
-    if torch.cuda.is_available():
-        torch.cuda.synchronize()
-    timer = perf_counter()
+    simulators = (jobs, in_queue, out_queue)
+    return simulators
 
+def ipm_split_states(ipm_settings_cpu, batch_part_states, n_batch):
     n_state = batch_part_states.shape[0]
     n_step = batch_part_states.shape[0] // n_batch
     if n_state % n_batch != 0:
         n_step = n_step + 1
 
+    sim_datas = []
     for id in range(n_step):
         if id != n_step - 1:
             inds = torch.arange(id * n_batch,
@@ -81,10 +92,36 @@ def ipm_simulate_parallel(batch_part_states: torch.tensor,
                                 batch_part_states.shape[0],
                                 device='cpu',
                                 dtype=torch.long)
-
         part_states = batch_part_states[inds, :]
         part_states, n_sub_states = ipm_get_states(part_states, ipm_settings_cpu['boundary_part_ids'], n_batch)
-        in_queue.put((id, part_states, n_sub_states))
+        sim_datas.append((id, part_states, n_sub_states, ipm_settings_cpu['n_pcg_iter']))
+    return sim_datas
+
+
+def ipm_terminate(simulators):
+    jobs, in_queue, out_queue = simulators
+    n_parallel = len(jobs)
+    # for stop the solver
+    for id in range(n_parallel):
+        in_queue.put(None)
+
+    # terminate all process
+    for proc in jobs:
+        proc.join()
+
+def ipm_simulate_parallel(sim_datas, simulators):
+    jobs, in_queue, out_queue = simulators
+
+    # start sending data
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    timer = perf_counter()
+
+    # load data
+    n_step = len(sim_datas)
+    for data in sim_datas:
+        id, part_states, n_sub_states, n_pcg = data
+        in_queue.put((id, part_states, n_sub_states, n_pcg))
 
     # read the output
     return_dict = {}
@@ -97,14 +134,6 @@ def ipm_simulate_parallel(batch_part_states: torch.tensor,
             progress.update()
             num_done = num_done + 1
 
-    # for stop the solver
-    for id in range(n_parallel):
-        in_queue.put(None)
-
-    # terminate all process
-    for proc in jobs:
-        proc.join()
-
     velocity = []
     stable_flag = []
     for id in range(n_step):
@@ -112,6 +141,7 @@ def ipm_simulate_parallel(batch_part_states: torch.tensor,
         stable_flag.append(return_dict[id][1])
     velocity = torch.vstack(velocity)
     stable_flag = torch.hstack(stable_flag)
+    n_state = stable_flag.shape[0]
 
     # print time and acc
     if torch.cuda.is_available():
@@ -123,6 +153,41 @@ def ipm_simulate_parallel(batch_part_states: torch.tensor,
     print("time", avg_sim_time)
 
     return velocity, stable_flag, avg_sim_time, avg_success_rate
+
+def ipm_search_parameters_parallel(ipm_settings: dict,
+                                   part_states,
+                                   simulators,
+                                   nsample=32,
+                                   acc_tol=0.9):
+    # load data
+    new_states = ipm_sort_states(part_states, ascend=False)
+    test_states, n_test_sub = ipm_get_states(new_states, ipm_settings['boundary_part_ids'], n_sample=nsample)
+    n_pcg_it = ipm_settings["n_pcg_iter"]
+    best_acc = 0.0
+    sim_datas = []
+    #scale_list = [1, 1.5, 2, 2.5, 3, 3.5, 4]
+    scale_list = [1, 2]
+    for id, scale in enumerate(scale_list):
+        n_pcg_iter = int(n_pcg_it * scale)
+        sim_datas.append((id, test_states, n_test_sub, n_pcg_iter))
+
+    # simulate
+    v, flag, x, y = ipm_simulate_parallel(sim_datas, simulators)
+    flag = flag.reshape(-1, n_test_sub)
+    acc = torch.sum(flag, dim = 1) / n_test_sub
+
+    if (acc > acc_tol).any():
+        indices = torch.arange(len(sim_datas))
+        indices = indices[acc > acc_tol]
+        index = torch.min(indices)
+        best_acc = acc[index]
+        n_pcg_iter = sim_datas[index][3]
+        ipm_settings["n_pcg_iter"] = n_pcg_iter
+        print("num pcg iter = ", ipm_settings["n_pcg_iter"], f" with a {best_acc: .2f} success rate")
+        return True
+    else:
+        print(f"Failed to find pcg iter with a maximum {best_acc: .2f} success rate")
+        return False
 
 if __name__ == '__main__':
     from learn2assemble import ASSEMBLY_RESOURCE_DIR, default_settings, RESOURCE_DIR
@@ -149,8 +214,6 @@ if __name__ == '__main__':
 
     filename = os.path.join(RESOURCE_DIR, f"curriculum/{name}.pt")
     part_states = torch.load(filename)['input']
-    # part_states[:, 10] = 0
-    # part_states[:, 31] = 0
 
     # sample
     part_states = ipm_sort_states(part_states, False)
@@ -173,5 +236,13 @@ if __name__ == '__main__':
 
     gpus = np.arange(torch.cuda.device_count())
     devices = [f"cuda:{gpu_id}" for gpu_id in gpus]
+    simulators = ipm_init_simulate_parallel(ipm_settings_cpu, devices, n_batch)
 
-    v_fp32, stable_fp32, avg_sim_time, avg_success_rate = ipm_simulate_parallel(part_states, ipm_settings_cpu, devices, 512)
+    # search parameters
+    ipm_search_parameters_parallel(ipm_settings_cpu, part_states, simulators, 64, 0.9)
+
+    # compute
+    n_batch = 512
+    sim_datas = ipm_split_states(ipm_settings_cpu, part_states, n_batch)
+    v_fp32, stable_fp32, avg_sim_time, avg_success_rate = ipm_simulate_parallel(sim_datas, simulators)
+    ipm_terminate(simulators)
