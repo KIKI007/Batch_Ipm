@@ -614,21 +614,34 @@ def ipm_simulate_parallel(batch_part_states: torch.tensor, list_ipm_settings):
     n_parallel = len(list_ipm_settings)
     n_state_per_process = batch_part_states.shape[0] // n_parallel
 
-    return_dict = {}
+    streams = []
+    return_dict = []
+    batch_part_states = batch_part_states.to(device = 'cpu')
     for id in range(n_parallel):
         ipm_settings = list_ipm_settings[id]
         device = torch.device(ipm_settings['device'])
+        s = torch.cuda.Stream(device=device)
+        streams.append(s)
         if id != n_parallel - 1:
-            inds = torch.arange(id * n_state_per_process, n_state_per_process * (id + 1), device = batch_part_states.device, dtype = torch.long)
+            inds = torch.arange(id * n_state_per_process,
+                                n_state_per_process * (id + 1),
+                                device='cpu',
+                                dtype=torch.long)
         else:
             # last take all
-            inds = torch.arange(id * n_state_per_process, batch_part_states.shape[0], device = batch_part_states.device, dtype = torch.long)
-        part_states = batch_part_states[inds, :].to(device = device)
-        return_dict = ipm_simulate(part_states, ipm_settings)
+            inds = torch.arange(id * n_state_per_process,
+                                batch_part_states.shape[0],
+                                device='cpu',
+                                dtype=torch.long)
+        part_states = batch_part_states[inds, :]
+        with torch.cuda.stream(s):
+            part_states = part_states.to(device = device, non_blocking=True)
+            return_dict.append(ipm_simulate(part_states, ipm_settings))
 
     velocity = []
     stable_flag = []
     for id in range(n_parallel):
+        streams[id].synchronize()
         velocity.append(return_dict[id][0])
         stable_flag.append(return_dict[id][1])
 
