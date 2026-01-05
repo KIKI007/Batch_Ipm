@@ -2,7 +2,8 @@ from time import perf_counter
 from pympler import asizeof
 from learn2assemble import default_settings
 from learn2assemble.assembly import load_assembly_from_files, compute_assembly_contacts
-from learn2assemble.simulator import ipm_init, ipm_search_parameters, ipm_simulate, ipm_get_states, print_logger, ipm_update_device
+from learn2assemble.simulator import ipm_init, ipm_search_parameters, ipm_simulate, ipm_get_states, print_logger, \
+    ipm_update_device, ipm_precondition
 from learn2assemble.render import *
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
@@ -66,6 +67,9 @@ def load_assembly(sol_file):
     return ipm_settings_cpu
 
 def test_instance(sol_file, ipm_settings_cpu):
+    torch.cuda.synchronize()
+    start_timer = perf_counter()
+
     obj_id = sol_file.split('_')[2]
     sol_id = sol_file.split('_')[4].split('.')[0]
 
@@ -74,8 +78,10 @@ def test_instance(sol_file, ipm_settings_cpu):
         'log': {},
         'activate': True
     }
-
+    
     ipm_settings = ipm_update_device(ipm_settings_cpu, 'cuda')
+    ipm_precondition(ipm_settings)
+
     # decided batch size
     n_batch = 1024
     if ipm_settings_cpu['n_part'] > 80:
@@ -94,8 +100,7 @@ def test_instance(sol_file, ipm_settings_cpu):
         num_workers=2  # Use 2 subprocesses for loading (adjust as needed)
     )
 
-    torch.cuda.synchronize()
-    start_timer = perf_counter()
+
     tot_success = 0
     with tqdm(total=len(dataloader), position=1) as progress:
         for part_states in dataloader:

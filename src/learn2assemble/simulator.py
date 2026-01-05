@@ -193,6 +193,27 @@ def ipm_contacts(ipm, parts, contacts, density, boundary_part_ids):
     M = np.stack(M)
     ipm['invM'] = torch.tensor(M, device=device, dtype=ipm['float_type'])
 
+def ipm_precondition(ipm):
+    # compute pre-conditioner
+    nx = ipm['nλn'] * (ipm["nt"] + 1) + ipm["nf"]
+    rbeG = ipm["nλn"], ipm["nt"], ipm["nf"], ipm["mu"]
+    rbeQ = ipm['nλn'], ipm['nt'], ipm['iAs'], ipm['iBs'], ipm['nAs'], ipm['nBs'], ipm['invM']
+    p = torch.eye(nx, device=device, dtype=float_type)
+    G = G_(p, *rbeG)
+    ipm['GG'] = G * G
+    Q = Q_(p, *rbeQ)
+    ipm['diagQ'] = torch.diagonal(Q)
+    H = GT_(G, *rbeG) + Q
+
+    if p.device.type == "mps":
+        cholesky_H = torch.linalg.cholesky(H.to(device = 'cpu').to(dtype = torch.float64))
+        ipm['cholesky_H'] = torch.cholesky_inverse(cholesky_H).to(device = device, dtype=float_type)
+        ipm['invH'] = torch.cholesky_inverse(cholesky_H).to(device = device, dtype=float_type)
+    else:
+        cholesky_H = torch.linalg.cholesky(H)
+        #ipm['invH'] = torch.cholesky_inverse(cholesky_H)
+        ipm['cholesky_H'] = cholesky_H
+
 def ipm_init(parts: list[Trimesh],
              contacts: list[dict],
              settings: dict):
@@ -229,46 +250,8 @@ def ipm_init(parts: list[Trimesh],
     ipm_contacts(ipm, parts, contacts, ipm['density'], ipm['boundary_part_ids'])
     end_timer("ipm_contacts")
 
-
     # set low precision multiple
     torch.set_float32_matmul_precision('high')
-
-    # compute pre-conditioner
-    reset_timer("init pre-conditioner")
-    nx = ipm['nλn'] * (ipm["nt"] + 1) + ipm["nf"]
-    rbeG = ipm["nλn"], ipm["nt"], ipm["nf"], ipm["mu"]
-    rbeQ = ipm['nλn'], ipm['nt'], ipm['iAs'], ipm['iBs'], ipm['nAs'], ipm['nBs'], ipm['invM']
-    p = torch.eye(nx, device=device, dtype=float_type)
-
-    reset_timer("G")
-    G = G_(p, *rbeG)
-    end_timer("G")
-
-    reset_timer("GG")
-    ipm['GG'] = G * G
-    end_timer("GG")
-
-    reset_timer("Q")
-    Q = Q_(p, *rbeQ)
-    ipm['diagQ'] = torch.diagonal(Q)
-    end_timer("Q")
-
-    reset_timer("H")
-    H = GT_(G, *rbeG) + Q
-    end_timer("H")
-
-    end_timer("init pre-conditioner")
-
-    reset_timer("cholesky")
-    if p.device.type == "mps":
-        cholesky_H = torch.linalg.cholesky(H.to(device = 'cpu').to(dtype = torch.float64))
-        ipm['cholesky_H'] = torch.cholesky_inverse(cholesky_H).to(device = device, dtype=float_type)
-        ipm['invH'] = torch.cholesky_inverse(cholesky_H).to(device = device, dtype=float_type)
-    else:
-        cholesky_H = torch.linalg.cholesky(H)
-        #ipm['invH'] = torch.cholesky_inverse(cholesky_H)
-        ipm['cholesky_H'] = cholesky_H
-    end_timer("cholesky")
 
     # auto parameters
     settings["ipm"]["Ccp"] = 1.2 * abs(torch.sum(settings['ipm']['g']).item())
