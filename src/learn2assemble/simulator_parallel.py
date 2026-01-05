@@ -110,7 +110,7 @@ def ipm_simulate_parallel(batch_part_states: torch.tensor,
     for id in range(n_step):
         velocity.append(return_dict[id][0])
         stable_flag.append(return_dict[id][1])
-    velocity = torch.hstack(velocity)
+    velocity = torch.vstack(velocity)
     stable_flag = torch.hstack(stable_flag)
 
     # print time and acc
