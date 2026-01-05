@@ -15,7 +15,7 @@ logger = {
     'activate': True,
 }
 
-if platform.system() == 'Windows':
+if platform.system() == 'Windows' or platform.system() == 'Darwin':
     disable_compile = True
 else:
     disable_compile = False
@@ -26,7 +26,8 @@ def inf_norm(x):
 
 def reset_timer(name):
     if logger['activate']:
-        torch.cuda.synchronize()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
         if name not in logger['timer']:
             logger['timer'][name] = perf_counter()
             logger['log'][name] = 0.0
@@ -35,7 +36,8 @@ def reset_timer(name):
 
 def end_timer(name):
     if logger['activate']:
-        torch.cuda.synchronize()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
         if 'log' not in logger:
             logger['log'] = {}
         if name in logger['timer']:
@@ -51,7 +53,6 @@ def print_logger(nbatch=1.0, names=[]):
             for name in names:
                 if name in logger['log']:
                     print(name, f":\t\t\t {logger['log'][name] / nbatch:.3e}")
-
 
 @torch.compile(disable=disable_compile)
 def GT_(p, nλn, nt, nf, mu):
@@ -197,6 +198,14 @@ def ipm_contacts(ipm, parts, contacts, density, boundary_part_ids):
 def ipm_init(parts: list[Trimesh],
              contacts: list[dict],
              settings: dict):
+
+    if platform.system() == "Darwin":
+        default_device = "mps"
+    elif torch.cuda.is_available():
+        default_device = "cuda"
+    else:
+        default_device = "cpu"
+
     update_default_settings(settings,
                             "ipm",
                             {
@@ -207,7 +216,7 @@ def ipm_init(parts: list[Trimesh],
                                 "pcg_rel_eps": 1E-2,
                                 "x_bound_tol": 1E-6,
                                 "float_type": torch.float32,
-                                "device": torch.device("cuda" if torch.cuda.is_available() else "cpu")})
+                                "device": torch.device(default_device)})
 
     ipm = update_default_settings(settings, "ipm", settings["rbe"])
 
@@ -233,9 +242,14 @@ def ipm_init(parts: list[Trimesh],
     ipm['diagQ'] = torch.diagonal(ipm['Q'])
 
     H = GT_(G, *rbeG) + ipm['Q']
-    cholesky_H = torch.linalg.cholesky(H)
-    ipm['cholesky_H'] = cholesky_H
-    ipm['invH'] = torch.cholesky_inverse(cholesky_H)
+    if p.device.type == "mps":
+        cholesky_H = torch.linalg.cholesky(H.to(device = 'cpu').to(dtype = torch.float64))
+        ipm['cholesky_H'] = torch.cholesky_inverse(cholesky_H).to(device = device, dtype=float_type)
+        ipm['invH'] = torch.cholesky_inverse(cholesky_H).to(device = device, dtype=float_type)
+    else:
+        cholesky_H = torch.linalg.cholesky(H)
+        ipm['invH'] = torch.cholesky_inverse(cholesky_H)
+        ipm['cholesky_H'] = cholesky_H
 
     # auto parameters
     settings["ipm"]["Ccp"] = 1.2 * abs(torch.sum(settings['ipm']['g']).item())
@@ -264,15 +278,6 @@ def ipm_search_parameters(ipm_settings: dict, part_states, acc_tol=0.9):
         ipm_settings["n_pcg_iter"] = 400
         print(f"Failed to find pcg iter with a maximum {best_acc: .2f} success rate")
         return False
-
-def ipm_init_parallel(ipm_settings,
-                      gpu_ids: list):
-
-    list_ipm_settings = []
-    for gpu_id in gpu_ids:
-        list_ipm_settings.append(ipm_update_device(ipm_settings, device=f"cuda:{gpu_id}"))
-
-    return list_ipm_settings
 
 def ipm_index_mapping(batch_part_states, iAs, iBs, nλn, device):
     if batch_part_states.ndim == 1:
@@ -355,8 +360,10 @@ def ipm_evaluate_result(ipm, xclip, ps):
 def ipm_start_solve(ipm, h, q):
     rbe = ipm.nλn, ipm.nt, ipm.nf, ipm.mu
     b = GT_(h, *rbe) - q
-    x = torch.cholesky_solve(b, ipm.cholesky_H)
-    #x = ipm.invH @ b
+    if h.device.type == 'mps':
+        x = ipm.invH @ b # for mac
+    else:
+        x = torch.cholesky_solve(b, ipm.cholesky_H)
 
     oldz = G_(x, *rbe) - h
     alpha_p = torch.max(oldz, 0).values
@@ -379,12 +386,8 @@ def ipm_kkt_res(ipm, q, h, x, s, z):
 
 def ipm_precond(ipm, s, z):
     ZS = z / s
-    #rbe = ipm.nλn, ipm.nt, ipm.nf, ipm.mu
-    #I = torch.eye(ipm.GG.shape[1], device=s.device, dtype=s.dtype)
-    #diagG = torch.diagonal(GTZSG_(I, ZS, *rbe))
     diagG = torch.einsum("ji, jb -> ib", ipm.GG, ZS)
     invM = diagG + ipm.diagQ[:, None]
-    #invM = ipm.diagQ[:, None].repeat((1, s.shape[1]))
     invM = 1.0 / invM
     return invM
 
@@ -569,17 +572,18 @@ def ipm_simulate(batch_part_states: list[dict], ipm_settings):
     xclip = torch.clip(result_x, xl, xu)
     velocity, velocity_inf_nrm = ipm_evaluate_result(ipm, xclip, ps)
     end_timer('ipm')
-    return velocity, (velocity_inf_nrm < ipm.velocity_tol)
+    return velocity.cpu(), (velocity_inf_nrm < ipm.velocity_tol).cpu()
 
-def ipm_simulate_parallel_proc(gpu_id, part_states, ipm_settings_cpu, return_dict):
-    ipm_settings = ipm_update_device(ipm_settings_cpu, f"cuda:{gpu_id}")
+def ipm_simulate_parallel_proc(job_id, device, part_states, ipm_settings_cpu, return_dict):
+    if device.type == 'cuda' and ipm_settings_cpu['float_type'] == torch.float32:
+        torch.set_float32_matmul_precision('high')
+    ipm_settings = ipm_update_device(ipm_settings_cpu, device)
     velocity, stable_flag = ipm_simulate(part_states, ipm_settings)
-    return_dict[gpu_id] = (velocity.cpu(), stable_flag.cpu())
+    return_dict[job_id] = (velocity, stable_flag)
 
-def ipm_simulate_parallel(batch_part_states: list[dict], ipm_settings_cpu, gpu_ids):
-    n_parallel = len(gpu_ids)
+def ipm_simulate_parallel(batch_part_states: list[dict], ipm_settings_cpu, devices):
+    n_parallel = len(devices)
     n_state_per_process = batch_part_states.shape[0] // n_parallel
-
     manager = mp.Manager()
     return_dict = manager.dict()
 
@@ -590,8 +594,9 @@ def ipm_simulate_parallel(batch_part_states: list[dict], ipm_settings_cpu, gpu_i
         else:
             # last take all
             part_states = batch_part_states[id * n_state_per_process:, :].cpu()
+        device = torch.device(devices[id])
         p = mp.Process(target=ipm_simulate_parallel_proc,
-                       args=(gpu_ids[id], part_states, ipm_settings_cpu, return_dict))
+                       args=(id, device, part_states, ipm_settings_cpu, return_dict))
         jobs.append(p)
         p.start()
 
@@ -599,13 +604,13 @@ def ipm_simulate_parallel(batch_part_states: list[dict], ipm_settings_cpu, gpu_i
     stable_flag = []
     for proc in jobs:
         proc.join()
-
     for id in range(n_parallel):
-        velocity.append(return_dict[id][0].numpy())
-        stable_flag.append(return_dict[id][1].numpy())
+        velocity.append(return_dict[id][0])
+        stable_flag.append(return_dict[id][1])
 
-    velocity = np.hstack(velocity)
-    stable_flag = np.hstack(stable_flag)
+    velocity = torch.hstack(velocity)
+    stable_flag = torch.hstack(stable_flag)
+
     return velocity, stable_flag
 
 def init_gurobi(parts, contacts, settings: dict):
@@ -664,11 +669,11 @@ def simulate_gurobi(batch_part_states: list[dict],
         else:
             flags.append(False)
             vs.append(np.zeros(rbe.nf))
-    vs = np.vstack(vs)
+    vs = torch.tensor(vs, device ="cpu", dtype=torch.float32)
     vs = vs.T
+    flags = torch.tensor(flags, device ="cpu", dtype=torch.bool)
     end_timer('gurobi')
-    return vs, np.array(flags)
-
+    return vs, flags
 
 def simulate(parts: list[Trimesh],
              contacts: list[dict],
@@ -687,7 +692,7 @@ def simulate(parts: list[Trimesh],
         if not ipm_computed:
             ipm_init(parts, contacts, settings)
         x, flag = ipm_simulate(batch_part_states, settings["ipm"])
-        return x.cpu().numpy(), flag.cpu().numpy()
+        return x, flag
 
 if __name__ == '__main__':
     from learn2assemble import ASSEMBLY_RESOURCE_DIR, default_settings, RESOURCE_DIR
@@ -700,10 +705,10 @@ if __name__ == '__main__':
     except RuntimeError:
         exit(0)
 
-    default_settings['rbe']['mu'] = 0.5
-    default_settings["assembly"]["contact_shrink_ratio"] = 0.0  # for robustnessly computing the contact surfaces
+    default_settings['rbe']['mu'] = 0.2
+    default_settings["assembly"]["contact_shrink_ratio"] = 0.1  # for robustnessly computing the contact surfaces
 
-    n_batch = 1
+    n_batch = 2048
     torch.manual_seed(0)
     name = "tetris-999"
     parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + f"/{name}")
@@ -731,6 +736,8 @@ if __name__ == '__main__':
         "kkt_conv_eps": 1E-4,
         "float_type": torch.float32,
     }
+    logger['activate'] = False
+
     reset_timer('contact')
     contacts = compute_assembly_contacts(parts, default_settings)
     end_timer('contact')
@@ -740,34 +747,38 @@ if __name__ == '__main__':
     end_timer('init ipm')
 
     ipm_settings_cpu = ipm_update_device(ipm_settings, 'cpu')
-    gpus = np.arange(torch.cuda.device_count())
-    print("available gpus:", gpus)
 
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    timer = perf_counter()
+
+    devices = ["cuda:0", "cuda:1"]
+    # devices = ["cuda:0"]
+    v_fp32, stable_fp32 = ipm_simulate_parallel(part_states, ipm_settings_cpu, devices)
     #v_fp32, stable_fp32 = simulate(parts, contacts, part_states, default_settings)
 
-    torch.cuda.synchronize()
-    timer = perf_counter()
-    #v_fp32, stable_fp32 = ipm_simulate_parallel(part_states, ipm_settings_cpu, gpus)
-    v_fp32, stable_fp32 = simulate(parts, contacts, part_states, default_settings)
-    torch.cuda.synchronize()
-    print("time ", (perf_counter() - timer) / stable_fp32.shape[0])
-    print(np.sum(stable_fp32).item() / stable_fp32.shape[0])
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    sim_time = perf_counter() - timer
+
+    print("time ", sim_time / stable_fp32.shape[0])
+    print(torch.sum(stable_fp32).item() / stable_fp32.shape[0])
     print_logger(1)
 
-    #render
-    import polyscope as ps
-
-    init_polyscope()
-    t = 0
-
-    def callback():
-        global t
-        changed, t = psim.SliderFloat("time", v=t, v_min=0, v_max=1)
-        if changed:
-            draw_assembly_motion(parts, part_states[0], v_fp32[:, 0] * t)
-
-
-    draw_contacts(contacts, part_states[0])
-    draw_assembly_motion(parts, part_states[0], v_fp32[:, 0] * t)
-    ps.set_user_callback(callback)
-    ps.show()
+    # #render
+    # import polyscope as ps
+    #
+    # init_polyscope()
+    # t = 0
+    #
+    # def callback():
+    #     global t
+    #     changed, t = psim.SliderFloat("time", v=t, v_min=0, v_max=1)
+    #     if changed:
+    #         draw_assembly_motion(parts, part_states[0], v_fp32[:, 0] * t)
+    #
+    #
+    # draw_contacts(contacts, part_states[0])
+    # draw_assembly_motion(parts, part_states[0], v_fp32[:, 0] * t)
+    # ps.set_user_callback(callback)
+    # ps.show()
