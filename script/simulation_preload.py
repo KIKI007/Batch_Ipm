@@ -159,7 +159,7 @@ if __name__ == "__main__":
             ipm_settings_cpu = load_assembly(sol_file)
             dict_ipm_settings[sol_file] = ipm_settings_cpu
             memory = compute_memory(ipm_settings_cpu)
-            progress.set_postfix_str(f"{memory:.2e}")
+            progress.set_postfix_str(f"{memory:.1f}")
             progress.update()
 
     with tqdm(total=len(sol_files), position=0) as progress:
