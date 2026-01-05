@@ -78,7 +78,7 @@ def test_instance(sol_file, ipm_settings_cpu):
         'log': {},
         'activate': True
     }
-    
+
     ipm_settings = ipm_update_device(ipm_settings_cpu, 'cuda')
     ipm_precondition(ipm_settings)
 
@@ -139,7 +139,7 @@ def compute_memory(ipm_settings):
     for name, val in ipm_settings.items():
         if torch.is_tensor(val):
             total_memory += val.nelement() * val.element_size()
-    return total_memory / 1024.0 / 1024.0 / 1024.0
+    return total_memory / 1024.0 / 1024.0
 
 if __name__ == "__main__":
     sol_files = [f for f in listdir(curriculumn_folder) if isfile(join(curriculumn_folder, f))]
@@ -164,7 +164,7 @@ if __name__ == "__main__":
             ipm_settings_cpu = load_assembly(sol_file)
             dict_ipm_settings[sol_file] = ipm_settings_cpu
             memory = compute_memory(ipm_settings_cpu)
-            progress.set_postfix_str(f"{memory:.2f} GB")
+            progress.set_postfix_str(f"{memory:.2f} MB")
             progress.update()
 
     with tqdm(total=len(sol_files), position=0) as progress:
