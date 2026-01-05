@@ -127,7 +127,7 @@ def ipm_simulate_parallel(sim_datas, simulators):
     # read the output
     return_dict = {}
     num_done = 0
-    with tqdm(total=n_step) as progress:
+    with tqdm(total=n_step, position=1) as progress:
         while num_done < n_step:
             job_id, velocity, stable_flag = out_queue.get()
             return_dict[job_id] = (velocity, stable_flag)
