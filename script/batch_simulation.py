@@ -14,12 +14,18 @@ import torch.multiprocessing as mp
 from os.path import isfile, join, isdir
 from os import listdir
 import wandb
+import platform
+def is_wsl():
+    # 'uname -r' equivalent
+    release = platform.release().lower()
+    return 'microsoft' in release or 'wsl' in release
 
-curriculumn_folder = "/scratch/assembly/curriculum/"
-assembly_folder = "/scratch/assembly/Thingi10K_12/"
-#curriculumn_folder = "/mnt/d/curriculum_Thingi10K_12/Thingi10K_12/"
-#assembly_folder = "/mnt/d/assembly_Thingi10K_12/Thingi10K_12/"
-
+if is_wsl():
+    curriculumn_folder = "/mnt/d/curriculum_Thingi10K_12/Thingi10K_12/"
+    assembly_folder = "/mnt/d/assembly_Thingi10K_12/Thingi10K_12/"
+else:
+    curriculumn_folder = "/scratch/assembly/curriculum/"
+    assembly_folder = "/scratch/assembly/Thingi10K_12/"
 result_table = []
 
 def test_instance(obj_id, sol_id, devices=None):
@@ -54,7 +60,7 @@ def test_instance(obj_id, sol_id, devices=None):
     n_gpu = len(devices)
 
     # for h800
-    n_batch = 1024
+    n_batch = 512
     n_batch *= n_gpu
 
     # compute contacts
