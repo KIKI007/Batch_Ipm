@@ -759,7 +759,7 @@ if __name__ == '__main__':
 
     # sample
     part_states = ipm_sort_states(part_states, False)
-    part_states = ipm_get_states(part_states, boundary, n_batch)
+    part_states, _ = ipm_get_states(part_states, boundary, n_batch)
 
     # default_settings['gurobi'] = {}
     default_settings['ipm'] = {
@@ -790,8 +790,6 @@ if __name__ == '__main__':
         torch.cuda.synchronize()
     timer = perf_counter()
 
-    #devices = ["cuda:0", "cuda:1"]
-    # devices = ["cuda:0"]
     v_fp32, stable_fp32 = ipm_simulate_parallel(part_states, list_ipm_settings)
     #v_fp32, stable_fp32 = simulate(parts, contacts, part_states, default_settings)
 
