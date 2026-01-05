@@ -18,29 +18,31 @@ logger = {
 if platform.system() == 'Windows' or platform.system() == 'Darwin':
     disable_compile = True
 else:
-    disable_compile = False
+    disable_compile = True
 
 def inf_norm(x):
     return torch.max(torch.abs(x), dim=0).values
 
 def reset_timer(name):
-    if logger['activate']:
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
-        if name not in logger['timer']:
-            logger['timer'][name] = perf_counter()
-            logger['log'][name] = 0.0
-        else:
-            logger['timer'][name] = perf_counter()
+    pass
+    #if logger['activate']:
+        #if torch.cuda.is_available():
+            #torch.cuda.synchronize()
+        #if name not in logger['timer']:
+            #logger['timer'][name] = perf_counter()
+            #logger['log'][name] = 0.0
+        #else:
+            #logger['timer'][name] = perf_counter()
 
 def end_timer(name):
-    if logger['activate']:
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
-        if 'log' not in logger:
-            logger['log'] = {}
-        if name in logger['timer']:
-            logger['log'][name] += perf_counter() - logger['timer'][name]
+    pass
+    #if logger['activate']:
+        #if torch.cuda.is_available():
+            #torch.cuda.synchronize()
+        #if 'log' not in logger:
+            # logger['log'] = {}
+        #if name in logger['timer']:
+            #logger['log'][name] += perf_counter() - logger['timer'][name]
 
 def print_logger(nbatch=1.0, names=[]):
     if logger['activate']:
@@ -311,9 +313,9 @@ def ipm_index_mapping(batch_part_states, iAs, iBs, nλn, device):
         batch_part_states = batch_part_states.reshape(1, -1)
 
     if torch.is_tensor(batch_part_states):
-        part_states = batch_part_states.to(device=device, dtype=torch.long)
+        part_states = batch_part_states#.to(device=device, dtype=torch.long, non_blocking=True)
     else:
-        part_states = torch.tensor(batch_part_states, device=device, dtype=torch.long)
+        part_states = torch.tensor(batch_part_states, device=device, dtype=torch.long, non_blocking=True)
 
     n_batch = part_states.shape[0]
     p = (part_states == 1)[:, :, None].repeat(1, 1, 6).reshape(n_batch, -1)
@@ -491,6 +493,8 @@ def ipm_solve_rhs(ipm, s, z, invP, v1, v2, v3, n_iter, dx=None):
         # recompute the residual to avoid numerical errors
         rk = b - (GTZSG_(xk, ZS, *rbeG) + Q_(xk, *rbeQ))
         uk = invP * rk
+        # if rel < ipm.rel_eps:
+        #     break
         abs_ = torch.max(dx_rk)
         if abs_ < ipm.kkt_conv_eps / 10:
             break
@@ -589,6 +593,7 @@ def ipm_simulate(batch_part_states: list[dict], ipm_settings):
 
         #rel_ = torch.max(torch.abs(kkt_res_best - pre_res) / pre_res)
         abs_ = torch.max(kkt_res_best)
+        #print(rel_, abs_)
         if abs_ < ipm.kkt_conv_eps:
             break
         end_timer('update')
@@ -597,6 +602,166 @@ def ipm_simulate(batch_part_states: list[dict], ipm_settings):
     velocity, velocity_inf_nrm = ipm_evaluate_result(ipm, xclip, ps)
     end_timer('ipm')
     return velocity, (velocity_inf_nrm < ipm.velocity_tol)
+
+def ipm_init_parallel(batch_part_states: torch.tensor, ipm_settings, devices):
+    list_ipm_settings = []
+    for device in devices:
+        list_ipm_settings.append(ipm_update_device(ipm_settings, device))
+
+    n_parallel = len(list_ipm_settings)
+    n_state_per_process = batch_part_states.shape[0] // n_parallel
+
+    compiled_fns = []
+    for id in range(n_parallel):
+        settings = list_ipm_settings[id]
+        device = torch.device(devices[id])
+        fn = torch.compile(ipm_simulate, disable=False)
+        zeros = ipm_empty_states(ipm_settings['n_part'], ipm_settings['boundary_part_ids'], n_state_per_process)
+        compiled_fns.append(fn)
+        zeros = zeros.to(device = device)
+        fn(zeros, settings)
+    torch.cuda.synchronize()
+    print("compile done")
+    return list_ipm_settings, compiled_fns
+
+
+# 1. The Worker Function
+# This runs in a separate process. It reads from shared memory, computes on its GPU,
+# and writes results back to shared memory.
+def worker_ipm_simulate(rank, gpu_id,
+                        shared_states, state_indices,
+                        shared_velocity, shared_flags,
+                        ipm_settings):
+    # Set the device for this process
+    device = torch.device(f"cuda:{gpu_id}")
+    torch.cuda.set_device(device)
+
+    # Update settings for this specific GPU
+    local_settings = ipm_update_device(ipm_settings, device)
+
+    # Compile the function freshly in this process (compilation is not picklable)
+    # Note: On Windows/Mac, disable_compile might need to be True
+    sim_fn = torch.compile(ipm_simulate, disable=disable_compile)
+
+    # 1. Read input slice (Zero-copy read from shared CPU memory)
+    # We clone to GPU immediately to start processing
+    indices = state_indices[rank]
+    local_states = shared_states[indices[0]:indices[1]].to(device, non_blocking=True)
+
+    # 2. Run Simulation
+    local_vel, local_flag = sim_fn(local_states, local_settings)
+
+    # 3. Write output execution (Move back to CPU shared memory)
+    # We write directly into the pre-allocated shared result tensors
+    shared_velocity[:, indices[0]:indices[1]] = local_vel.cpu()
+    shared_flags[indices[0]:indices[1]] = local_flag.cpu()
+
+
+# 2. The Parallel Driver
+def ipm_simulate_multiprocess(batch_part_states, ipm_settings, gpu_ids):
+    num_gpus = len(gpu_ids)
+    total_samples = batch_part_states.shape[0]
+
+    # --- Step A: Prepare Memory ---
+
+    # 1. Ensure input is in Shared Memory
+    # If it's already a CPU tensor, share_memory_() works in-place.
+    # If it's on GPU, move to CPU first.
+    if batch_part_states.is_cuda:
+        batch_part_states = batch_part_states.cpu()
+
+    # Essential for multiprocess zero-copy
+    batch_part_states.share_memory_()
+
+    # 2. Pre-allocate Output Tensors in Shared Memory
+    # We know the output shapes:
+    # Velocity: [nf, total_samples] (nf is typically ipm['nf'])
+    # Flags: [total_samples]
+
+    nf = ipm_settings['nf']
+
+    # Allocate shared memory for outputs
+    shared_velocity = torch.zeros((nf, total_samples), dtype=ipm_settings['float_type'])
+    shared_velocity.share_memory_()
+
+    shared_flags = torch.zeros(total_samples, dtype=torch.bool)
+    shared_flags.share_memory_()
+
+    # --- Step B: Calculate Indices ---
+    samples_per_gpu = total_samples // num_gpus
+    state_indices = []
+    for i in range(num_gpus):
+        start = i * samples_per_gpu
+        end = (i + 1) * samples_per_gpu if i < num_gpus - 1 else total_samples
+        state_indices.append((start, end))
+
+    # --- Step C: Launch Processes ---
+    processes = []
+    mp.set_start_method('spawn', force=True)
+
+    for rank in range(num_gpus):
+        p = mp.Process(
+            target=worker_ipm_simulate,
+            args=(
+                rank,
+                gpu_ids[rank],
+                batch_part_states,  # Passing shared tensor handle
+                state_indices,
+                shared_velocity,  # Passing shared tensor handle
+                shared_flags,  # Passing shared tensor handle
+                ipm_settings  # Note: dicts are pickled, but small settings are fine
+            )
+        )
+        p.start()
+        processes.append(p)
+
+    # --- Step D: Wait ---
+    for p in processes:
+        p.join()
+
+    return shared_velocity, shared_flags
+
+def ipm_simulate_parallel(batch_part_states: torch.tensor, list_ipm_settings, compiled_fns):
+    n_parallel = len(list_ipm_settings)
+    n_state_per_process = batch_part_states.shape[0] // n_parallel
+
+    streams = []
+    return_dict = {}
+    batch_part_states = batch_part_states.to(device = 'cpu')
+
+    for id in range(n_parallel):
+        ipm_settings = list_ipm_settings[id]
+        device = torch.device(ipm_settings['device'])
+        s = torch.cuda.Stream(device=device)
+        streams.append(s)
+        with torch.cuda.stream(s):
+            if id != n_parallel - 1:
+                inds = torch.arange(id * n_state_per_process,
+                                    n_state_per_process * (id + 1),
+                                    device='cpu',
+                                    dtype=torch.long)
+            else:
+                # last take all
+                inds = torch.arange(id * n_state_per_process,
+                                    batch_part_states.shape[0],
+                                    device='cpu',
+                                    dtype=torch.long)
+            part_states = batch_part_states[inds, :].to(device = device, non_blocking=True)
+            return_dict[id] = compiled_fns[id](part_states, ipm_settings)
+
+    velocity = []
+    stable_flag = []
+    for id in range(n_parallel):
+        streams[id].synchronize()
+
+    for id in range(n_parallel):
+        velocity.append(return_dict[id][0].cpu())
+        stable_flag.append(return_dict[id][1].cpu())
+
+    velocity = torch.hstack(velocity)
+    stable_flag = torch.hstack(stable_flag)
+
+    return velocity, stable_flag
 
 def init_gurobi(parts, contacts, settings: dict):
     params = {
@@ -645,6 +810,7 @@ def simulate_gurobi(batch_part_states: list[dict],
             residual = (rbe.Jn.T @ λn + rbe.Jt.T @ λt + rbe.g) * ps[:, id]
             velocity = rbe.invM @ residual
             velocity_inf_nrm = np.max(np.abs(velocity), axis=0)
+            # print(velocity_inf_nrm)
             if velocity_inf_nrm < rbe.velocity_tol:
                 flags.append(True)
             else:
@@ -683,6 +849,11 @@ if __name__ == '__main__':
     from learn2assemble.render import *
     from learn2assemble.assembly import load_assembly_from_files, compute_assembly_contacts
     import os
+
+    try:
+        mp.set_start_method('spawn', force=True)
+    except RuntimeError:
+        exit(0)
 
     default_settings['rbe']['mu'] = 0.2
     default_settings["assembly"]["contact_shrink_ratio"] = 0.1  # for robustnessly computing the contact surfaces
@@ -724,12 +895,14 @@ if __name__ == '__main__':
 
     gpus = np.arange(torch.cuda.device_count())
     devices = [f"cuda:{gpu_id}" for gpu_id in gpus]
+    list_ipm_settings, compiled_fns = ipm_init_parallel(part_states, ipm_settings, devices)
 
     if torch.cuda.is_available():
         torch.cuda.synchronize()
     timer = perf_counter()
 
-    v_fp32, stable_fp32 = ipm_simulate(part_states, ipm_settings)
+    v_fp32, stable_fp32 = ipm_simulate_parallel(part_states, list_ipm_settings, compiled_fns)
+    #v_fp32, stable_fp32 = simulate(parts, contacts, part_states, default_settings)
 
     if torch.cuda.is_available():
         torch.cuda.synchronize()
