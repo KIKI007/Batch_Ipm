@@ -526,13 +526,6 @@ def ipm_update_device(ipm, device):
     new_ipm["device"] = torch.device(device)
     return new_ipm
 
-def ipm_compile_functions(ipm_settings):
-    ipm_settings['Q_'] = Q_
-    ipm_settings['G_'] = G_
-    ipm_settings['GT_'] = GT_
-    ipm_settings['GTZSG_'] = GTZSG_
-    ipm_settings['linesearch'] = ipm_linesearch
-
 def ipm_simulate(batch_part_states: list[dict], ipm_settings):
     # name space
     reset_timer('ipm')
