@@ -26,6 +26,9 @@ else:
 result_table = []
 
 def test_instance(sol_file, ipm_settings_cpu):
+    obj_id = sol_file.split('_')[2]
+    sol_id = sol_file.split('_')[4].split('.')[0]
+    
     learn2assemble.simulator.logger = {
         'timer': {},
         'log': {},
