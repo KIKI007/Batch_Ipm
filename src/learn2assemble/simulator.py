@@ -249,15 +249,13 @@ def ipm_init(parts: list[Trimesh],
     end_timer("GG")
 
     reset_timer("Q")
-    ipm['Q'] = Q_(p, *rbeQ)
-    ipm['diagQ'] = torch.diagonal(ipm['Q'])
+    Q = Q_(p, *rbeQ)
+    ipm['diagQ'] = torch.diagonal(Q)
     end_timer("Q")
 
     reset_timer("H")
-    H = GT_(G, *rbeG) + ipm['Q']
+    H = GT_(G, *rbeG) + Q
     end_timer("H")
-
-    del ipm['Q']
 
     end_timer("init pre-conditioner")
 
