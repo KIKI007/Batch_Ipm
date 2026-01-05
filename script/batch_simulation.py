@@ -15,10 +15,10 @@ from os.path import isfile, join, isdir
 from os import listdir
 import wandb
 
-#curriculumn_folder = "/scratch/assembly/curriculum/"
-#assembly_folder = "/scratch/assembly/Thingi10K_12/"
-curriculumn_folder = "/mnt/d/curriculum_Thingi10K_12/Thingi10K_12/"
-assembly_folder = "/mnt/d/assembly_Thingi10K_12/Thingi10K_12/"
+curriculumn_folder = "/scratch/assembly/curriculum/"
+assembly_folder = "/scratch/assembly/Thingi10K_12/"
+#curriculumn_folder = "/mnt/d/curriculum_Thingi10K_12/Thingi10K_12/"
+#assembly_folder = "/mnt/d/assembly_Thingi10K_12/Thingi10K_12/"
 
 result_table = []
 

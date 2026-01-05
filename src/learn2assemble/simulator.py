@@ -729,7 +729,7 @@ if __name__ == '__main__':
 
     reset_timer('init ipm')
     ipm_settings = ipm_init(parts, contacts, default_settings)
-    ipm_compile_functions(ipm_settings, disable_compile)
+    ipm_compile_functions(ipm_settings)
     ipm_warmup(part_states, ipm_settings)
     end_timer('init ipm')
 
