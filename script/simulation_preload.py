@@ -14,6 +14,8 @@ import learn2assemble
 from os.path import isfile, join, isdir
 from os import listdir
 import sys
+import copy
+import torch.multiprocessing as mp
 
 def is_wsl():
     # 'uname -r' equivalent
@@ -35,15 +37,20 @@ else:
 
 result_table = []
 
-def load_assembly(sol_file):
-    obj_id = sol_file.split('_')[2]
-    sol_id = sol_file.split('_')[4].split('.')[0]
+def compute_memory(ipm_settings):
+    total_memory = 0
+    for name, val in ipm_settings.items():
+        if torch.is_tensor(val):
+            total_memory += val.nelement() * val.element_size()
+    return total_memory / 1024.0 / 1024.0
 
+def load_assembly(in_, out_, return_dict):
+    ipm_settings_default = copy.deepcopy(default_settings)
     # default settings
-    default_settings['rbe']['mu'] = 0.2
-    default_settings['rbe']['velocity_tol'] = 1E-2
-    default_settings["assembly"]["contact_shrink_ratio"] = 0.1  # for robustnessly computing the contact surfaces
-    default_settings['ipm'] = {
+    ipm_settings_default['rbe']['mu'] = 0.2
+    ipm_settings_default['rbe']['velocity_tol'] = 1E-2
+    ipm_settings_default["assembly"]["contact_shrink_ratio"] = 0.1  # for robustnessly computing the contact surfaces
+    ipm_settings_default['ipm'] = {
         "n_iter": 30,
         "n_pcg_eval_iter": 10,
         "n_pcg_iter": 300,
@@ -51,20 +58,31 @@ def load_assembly(sol_file):
         "kkt_conv_eps": 1E-4,
         "x_bound_tol": 1E-5,
         "float_type": torch.float32,
+        "device": "cpu"
     }
 
-    # load geometry
-    foldername = os.path.join(assembly_folder, f"Thingi10K_12_{obj_id}/sol_{sol_id}")
-    parts = load_assembly_from_files(foldername)
+    while True:
+        sol_file = in_.get()
 
-    # compute contacts
-    contacts = compute_assembly_contacts(parts, default_settings)
+        obj_id = sol_file.split('_')[2]
+        sol_id = sol_file.split('_')[4].split('.')[0]
 
-    # init ipm
-    ipm_settings = ipm_init(parts, contacts, default_settings)
-    ipm_settings_cpu = ipm_update_device(ipm_settings, 'cpu')
+        if sol_file is None:
+            break
 
-    return ipm_settings_cpu
+        # load geometry
+        foldername = os.path.join(assembly_folder, f"Thingi10K_12_{obj_id}/sol_{sol_id}")
+        parts = load_assembly_from_files(foldername)
+
+        # compute contacts
+        contacts = compute_assembly_contacts(parts, ipm_settings_default)
+
+        # init ipm
+        ipm_settings = ipm_init(parts, contacts, ipm_settings_default)
+
+        # send back
+        return_dict[sol_file] = ipm_settings
+        out_.put((sol_file, compute_memory(ipm_settings)))
 
 def test_instance(sol_file, ipm_settings_cpu):
     torch.cuda.synchronize()
@@ -133,14 +151,49 @@ def test_instance(sol_file, ipm_settings_cpu):
 
     return True
 
-def compute_memory(ipm_settings):
-    total_memory = 0
-    for name, val in ipm_settings.items():
-        if torch.is_tensor(val):
-            total_memory += val.nelement() * val.element_size()
-    return total_memory / 1024.0 / 1024.0
+def parallel_load_assembly(sol_files, n_worker = 64):
+    manager = mp.Manager()
+    dict_ipm_settings = manager.dict()
+    in_ = manager.Queue()
+    out_ = manager.Queue()
+
+    jobs = []
+    for worker in range(n_worker):
+        p = mp.Process(target=load_assembly,
+                       args=(in_, out_, dict_ipm_settings))
+        jobs.append(p)
+        p.start()
+
+    for sol_file in sol_files:
+        in_.put(sol_file)
+
+    # preloading
+    num_done = 0
+    with tqdm(total=len(sol_files)) as progress:
+        while num_done < len(sol_files):
+            sol_file, memory = out_.get()
+            num_done += 1
+            progress.set_postfix_str(f"{memory:.2f} MB")
+            progress.update()
+
+    # exit
+    for sol_file in sol_files:
+        in_.put(None)
+
+    for p in jobs:
+        p.join()
+
+    return dict(dict_ipm_settings)
+
 
 if __name__ == "__main__":
+    os.environ['MKL_THREADING_LAYER'] = 'GNU'
+    os.environ['MKL_SERVICE_FORCE_INTEL'] = '1'
+    try:
+        mp.set_start_method('spawn', force=True)
+    except RuntimeError:
+        exit(0)
+
     sol_files = [f for f in listdir(curriculumn_folder) if isfile(join(curriculumn_folder, f))]
     sol_files.sort()
     sol_files = sol_files[::-1]
@@ -156,16 +209,8 @@ if __name__ == "__main__":
     #         sol_files = sol_files[id:-1]
     #         break
 
-    dict_ipm_settings = {}
 
-    # preloading
-    with tqdm(total=len(sol_files)) as progress:
-        for sol_file in sol_files:
-            ipm_settings_cpu = load_assembly(sol_file)
-            dict_ipm_settings[sol_file] = ipm_settings_cpu
-            memory = compute_memory(ipm_settings_cpu)
-            progress.set_postfix_str(f"{memory:.2f} MB")
-            progress.update()
+    dict_ipm_settings = parallel_load_assembly(sol_files, n_worker=64)
 
     with tqdm(total=len(sol_files), position=0) as progress:
         for sol_file in sol_files:
