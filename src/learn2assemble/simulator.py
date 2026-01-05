@@ -194,6 +194,8 @@ def ipm_contacts(ipm, parts, contacts, density, boundary_part_ids):
     ipm['invM'] = torch.tensor(M, device=device, dtype=ipm['float_type'])
 
 def ipm_precondition(ipm):
+    device = ipm["device"]
+    float_type = ipm["float_type"]
     # compute pre-conditioner
     nx = ipm['nλn'] * (ipm["nt"] + 1) + ipm["nf"]
     rbeG = ipm["nλn"], ipm["nt"], ipm["nf"], ipm["mu"]
