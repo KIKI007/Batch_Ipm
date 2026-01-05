@@ -82,7 +82,7 @@ def compute_contacts_between_two_parts(partA: Trimesh,
             "inv_proj": np.linalg.inv(projection)
         })
         return
-    
+
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     #device = 'cpu'
     floatType = torch.float32

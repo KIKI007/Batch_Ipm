@@ -209,7 +209,7 @@ if __name__ == "__main__":
     #         sol_files = sol_files[id:-1]
     #         break
 
-    dict_ipm_settings = parallel_load_assembly(sol_files, n_worker=64)
+    dict_ipm_settings = parallel_load_assembly(sol_files, n_worker=32)
 
     with tqdm(total=len(sol_files), position=0) as progress:
         for sol_file in sol_files:
