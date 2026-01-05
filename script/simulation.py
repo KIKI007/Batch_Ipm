@@ -2,7 +2,8 @@ from time import perf_counter
 
 from learn2assemble import default_settings
 from learn2assemble.assembly import load_assembly_from_files, compute_assembly_contacts
-from learn2assemble.simulator import ipm_init, ipm_search_parameters, ipm_simulate, ipm_get_states, ipm_compile_functions
+from learn2assemble.simulator import ipm_init, ipm_search_parameters, ipm_simulate, ipm_get_states, \
+    ipm_compile_functions, print_logger
 from learn2assemble.render import *
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
@@ -26,7 +27,7 @@ def test_instance(obj_id, sol_id, ipm=True):
     learn2assemble.simulator.logger = {
         'timer': {},
         'log': {},
-        'activate': False
+        'activate': True
     }
     # test
     default_settings['rbe']['mu'] = 0.2
@@ -107,6 +108,7 @@ def test_instance(obj_id, sol_id, ipm=True):
 
     with open('result.json', 'w') as f:
         json.dump(result_table, f, indent=4)
+    print_logger(1)
 
     return True
 

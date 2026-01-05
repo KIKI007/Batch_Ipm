@@ -717,12 +717,18 @@ if __name__ == '__main__':
     n_batch = 2048
     torch.manual_seed(0)
     name = "tetris-999"
+    reset_timer("load_assembly")
     parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + f"/{name}")
+    end_timer("load_assembly")
+
     boundary = [len(parts) - 1]
     default_settings['env']['boundary_part_ids'] = boundary
 
     filename = os.path.join(RESOURCE_DIR, f"curriculum/{name}.pt")
+    reset_timer("load_states")
     part_states = torch.load(filename)['input']
+    end_timer("load_states")
+
     #part_states[:, 10] = 0
     #part_states[:, 31] = 0
 
