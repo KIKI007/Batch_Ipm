@@ -1,5 +1,5 @@
 from time import perf_counter
-
+from pympler import asizeof
 from learn2assemble import default_settings
 from learn2assemble.assembly import load_assembly_from_files, compute_assembly_contacts
 from learn2assemble.simulator import ipm_init, ipm_search_parameters, ipm_simulate, ipm_get_states, print_logger, ipm_update_device
@@ -151,8 +151,7 @@ if __name__ == "__main__":
         for sol_file in sol_files:
             ipm_settings_cpu = load_assembly(sol_file)
             dict_ipm_settings[sol_file] = ipm_settings_cpu
-            memory = sys.getsizeof(dict_ipm_settings[sol_file])/1024.0/1024.0
-            print(memory)
+            memory = asizeof(dict_ipm_settings[sol_file])/1024.0/1024.0
             progress.set_postfix_str(f"{memory:.2f}")
             progress.update()
 
