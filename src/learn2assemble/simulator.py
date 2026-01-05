@@ -757,7 +757,6 @@ if __name__ == '__main__':
         mp.set_start_method('spawn', force=True)
     except RuntimeError:
         exit(0)
-    torch.compiler.reset()
 
     default_settings['rbe']['mu'] = 0.2
     default_settings["assembly"]["contact_shrink_ratio"] = 0.1  # for robustnessly computing the contact surfaces
