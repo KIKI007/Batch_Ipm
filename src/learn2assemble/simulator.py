@@ -615,7 +615,7 @@ def ipm_init_parallel(batch_part_states: torch.tensor, ipm_settings, devices):
     for id in range(n_parallel):
         settings = list_ipm_settings[id]
         device = torch.device(devices[id])
-        fn = torch.compile(ipm_simulate, disable=True)
+        fn = torch.compile(ipm_simulate, disable=False)
         zeros = ipm_empty_states(ipm_settings['n_part'], ipm_settings['boundary_part_ids'], n_state_per_process)
         compiled_fns.append(fn)
         zeros = zeros.to(device = device)
