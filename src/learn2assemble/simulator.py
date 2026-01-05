@@ -635,6 +635,8 @@ def ipm_simulate_parallel(batch_part_states: torch.tensor, list_ipm_settings):
     stable_flag = []
     for id in range(n_parallel):
         streams[id].synchronize()
+
+    for id in range(n_parallel):
         velocity.append(return_dict[id][0])
         stable_flag.append(return_dict[id][1])
 
