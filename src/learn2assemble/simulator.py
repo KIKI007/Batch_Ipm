@@ -257,6 +257,8 @@ def ipm_init(parts: list[Trimesh],
     H = GT_(G, *rbeG) + ipm['Q']
     end_timer("H")
 
+    del ipm['Q']
+
     end_timer("init pre-conditioner")
 
     reset_timer("cholesky")
