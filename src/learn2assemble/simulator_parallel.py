@@ -67,7 +67,6 @@ def ipm_init_simulate_parallel(ipm_settings_cpu,
     num_done = 0
     while num_done < n_parallel:
         done = out_queue.get()
-        print(done)
         num_done += 1
 
     simulators = (jobs, in_queue, out_queue)
