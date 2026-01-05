@@ -72,7 +72,9 @@ def ipm_init_simulate_parallel(ipm_settings_cpu,
     simulators = (jobs, in_queue, out_queue)
     return simulators
 
-def ipm_split_states(ipm_settings_cpu, batch_part_states, n_batch):
+def ipm_split_states(ipm_settings_cpu,
+                     batch_part_states,
+                     n_batch):
     n_state = batch_part_states.shape[0]
     n_step = batch_part_states.shape[0] // n_batch
     if n_state % n_batch != 0:
@@ -147,10 +149,6 @@ def ipm_simulate_parallel(sim_datas, simulators):
         torch.cuda.synchronize()
     avg_sim_time = (perf_counter() - timer) / n_state
     avg_success_rate = torch.sum(stable_flag).item() / n_state
-
-    print("acc", avg_success_rate)
-    print("time", avg_sim_time)
-
     return velocity, stable_flag, avg_sim_time, avg_success_rate
 
 def ipm_search_parameters_parallel(ipm_settings: dict,
@@ -174,6 +172,7 @@ def ipm_search_parameters_parallel(ipm_settings: dict,
     v, flag, x, y = ipm_simulate_parallel(sim_datas, simulators)
     flag = flag.reshape(-1, n_test_sub)
     acc = torch.sum(flag, dim = 1) / n_test_sub
+    print("acc:", acc)
 
     if (acc > acc_tol).any():
         indices = torch.arange(len(sim_datas))

@@ -81,9 +81,12 @@ def test_instance(obj_id, sol_id, devices=None):
     if not ipm_search_parameters_parallel(ipm_settings_cpu, part_states, simulators, 512, 0.9):
         return False
 
-    sim_datas = ipm_split_states(ipm_settings_cpu, simulators, n_batch)
+    sim_datas = ipm_split_states(ipm_settings_cpu, part_states, n_batch)
     _, _, avg_sim_time, avg_sucess_rate = ipm_simulate_parallel(sim_datas, simulators)
     ipm_terminate(simulators)
+
+    print("acc", avg_success_rate)
+    print("time", avg_sim_time)
 
     result_table.append({"name": obj_id,
                          "sol_id": sol_id,
