@@ -15,7 +15,7 @@ from os.path import isfile, join, isdir
 from os import listdir
 import sys
 import copy
-import multiprocessing as mp
+import torch.multiprocessing as mp
 
 def is_wsl():
     # 'uname -r' equivalent
@@ -208,7 +208,6 @@ if __name__ == "__main__":
     #     if obj_id == "2426":
     #         sol_files = sol_files[id:-1]
     #         break
-
 
     dict_ipm_settings = parallel_load_assembly(sol_files, n_worker=64)
 
