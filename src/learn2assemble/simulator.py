@@ -313,9 +313,9 @@ def ipm_index_mapping(batch_part_states, iAs, iBs, nλn, device):
         batch_part_states = batch_part_states.reshape(1, -1)
 
     if torch.is_tensor(batch_part_states):
-        part_states = batch_part_states.clone().to(device=device, dtype=torch.long)
+        part_states = batch_part_states.clone().to(device=device, dtype=torch.long, non_blocking=True)
     else:
-        part_states = torch.tensor(batch_part_states, device=device, dtype=torch.long)
+        part_states = torch.tensor(batch_part_states, device=device, dtype=torch.long, non_blocking=True)
 
     n_batch = part_states.shape[0]
     p = (part_states == 1)[:, :, None].repeat(1, 1, 6).reshape(n_batch, -1)
@@ -507,7 +507,7 @@ def ipm_update_device(ipm, device):
     new_ipm = {}
     for name, val in ipm.items():
         if torch.is_tensor(val):
-            new_ipm[name] = val.clone().to(device).share_memory_()
+            new_ipm[name] = val.clone().to(device)
         else:
             new_ipm[name] = copy.deepcopy(val)
     new_ipm["device"] = torch.device(device)
@@ -602,13 +602,6 @@ def ipm_simulate(batch_part_states: list[dict], ipm_settings):
     velocity, velocity_inf_nrm = ipm_evaluate_result(ipm, xclip, ps)
     end_timer('ipm')
     return velocity.cpu(), (velocity_inf_nrm < ipm.velocity_tol).cpu()
-
-def ipm_simulate_parallel_proc(job_id, queue): #ipm_settings, return_dict):
-    torch.set_float32_matmul_precision('high')
-    #velocity, stable_flag = ipm_simulate(part_states, ipm_settings)
-    part_states = torch.zeros((10, 10), device = 'cuda:0', dtype = torch.long)
-    part_states = part_states.share_memory_()
-    queue.put((job_id, part_states))
 
 def ipm_simulate_parallel(batch_part_states: torch.tensor, list_ipm_settings):
     n_parallel = len(list_ipm_settings)
