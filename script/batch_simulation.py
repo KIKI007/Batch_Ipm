@@ -75,8 +75,6 @@ def test_instance(sol_file, part_states, ipm_settings_cpu):
 
     return True
 
-def
-
 if __name__ == "__main__":
     os.environ['MKL_THREADING_LAYER'] = 'GNU'
     os.environ['MKL_SERVICE_FORCE_INTEL'] = '1'
