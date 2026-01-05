@@ -15,7 +15,7 @@ from os.path import isfile, join, isdir
 from os import listdir
 import sys
 import copy
-import torch.multiprocessing as mp
+import multiprocessing as mp
 
 def is_wsl():
     # 'uname -r' equivalent

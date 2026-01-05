@@ -123,8 +123,6 @@ def ipm_contacts(ipm, parts, contacts, density, boundary_part_ids):
     nBs = []
 
     device = ipm["device"]
-    print(device)
-    
     float_type = ipm["float_type"]
     nt = ipm['nt']
     ipm['nf'], ipm['nλn'], ipm['nλt'] = num_vars(parts, contacts, nt)
