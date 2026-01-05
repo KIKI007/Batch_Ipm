@@ -2,8 +2,7 @@ from time import perf_counter
 
 from learn2assemble import default_settings
 from learn2assemble.assembly import load_assembly_from_files, compute_assembly_contacts
-from learn2assemble.simulator import ipm_init, ipm_search_parameters, ipm_simulate, ipm_get_states, \
-    ipm_compile_functions, print_logger, ipm_update_device
+from learn2assemble.simulator import ipm_init, ipm_search_parameters, ipm_simulate, ipm_get_states, print_logger, ipm_update_device
 from learn2assemble.render import *
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
