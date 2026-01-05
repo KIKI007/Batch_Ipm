@@ -151,7 +151,7 @@ if __name__ == "__main__":
         for sol_file in sol_files:
             ipm_settings_cpu = load_assembly(sol_file)
             dict_ipm_settings[sol_file] = ipm_settings_cpu
-            memory = sys.getsizeof(dict_ipm_settings[sol_file])/1024/1024
+            memory = sys.getsizeof(dict_ipm_settings[sol_file])/1024.0/1024.0
             progress.set_postfix_str(f"{memory:.2f}")
             progress.update()
 
