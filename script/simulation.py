@@ -101,7 +101,7 @@ def test_instance(obj_id, sol_id, ipm=True):
     print("success rate:\t", tot_success / n_state)
 
     torch.cuda.synchronize()
-    print("time:\t", perf_counter() - start_timer)
+    print("time:\t", (perf_counter() - start_timer) / n_batch)
     print("\n")
 
     result_table.append({"name": obj_id,
