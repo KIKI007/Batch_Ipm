@@ -213,3 +213,4 @@ if __name__ == "__main__":
     with tqdm(total=len(sol_files), position=0) as progress:
         for sol_file in sol_files:
             test_instance(sol_file, dict_ipm_settings[sol_file])
+            progress.update()
