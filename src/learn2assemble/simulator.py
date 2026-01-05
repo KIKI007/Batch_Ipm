@@ -465,10 +465,8 @@ def ipm_solve_rhs(ipm, s, z, invP, v1, v2, v3, n_iter, dx=None):
     pk = uk.clone()
 
     m = n_iter // ipm.n_pcg_eval_iter
-    # reset_timer('pcg')
     for k in range(m):
         for t in range(ipm.n_pcg_eval_iter):
-            # Apk = GT @ (ZS * (G @ pk)) + Q @ pk
             # fast computation
             Apk = GTZSG_(pk, ZS, *rbeG) + Q_(pk, *rbeQ)
 
@@ -481,12 +479,10 @@ def ipm_solve_rhs(ipm, s, z, invP, v1, v2, v3, n_iter, dx=None):
             pk = uk + betak[None, :] * pk
 
         # only update x when rk decrease
-        #prev_rk = dx_rk.clone()
         error = inf_norm(rk)
         flag = error < dx_rk
         dx[:, flag] = xk[:, flag]
         dx_rk[flag] = error[flag]
-        # rel = torch.max(torch.abs(dx_rk - prev_rk) / prev_rk)
 
         # recompute the residual to avoid numerical errors
         rk = b - (GTZSG_(xk, ZS, *rbeG) + Q_(xk, *rbeQ))
