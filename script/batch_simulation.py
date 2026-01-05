@@ -62,7 +62,6 @@ def test_instance(obj_id, sol_id, devices=None):
 
     # for h800
     n_batch = 512
-    n_batch *= n_gpu
 
     # compute contacts
     contacts = compute_assembly_contacts(parts, default_settings)
@@ -78,7 +77,7 @@ def test_instance(obj_id, sol_id, devices=None):
 
     # search best parameters
     # update settings
-    if not ipm_search_parameters_parallel(ipm_settings_cpu, part_states, simulators, 512, 0.9):
+    if not ipm_search_parameters_parallel(ipm_settings_cpu, part_states, simulators, n_batch, 0.9):
         return False
 
     sim_datas = ipm_split_states(ipm_settings_cpu, part_states, n_batch)
