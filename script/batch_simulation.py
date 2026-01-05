@@ -51,14 +51,14 @@ def test_instance(sol_file, part_states, ipm_settings_cpu):
     print("time", avg_sim_time)
 
     result_table.append({"name": sol_file,
-                         "n_parts": ipm_settings['n_part'],
+                         "n_parts": ipm_settings_cpu['n_part'],
                          "n_states": n_state,
                          "time": avg_sim_time,
                          "acc": avg_success_rate}
                         )
 
     # log wandb
-    wandb.log({"n_parts": ipm_settings['n_part'],
+    wandb.log({"n_parts": ipm_settings_cpu['n_part'],
                "n_states": n_state,
                "time": avg_sim_time,
                "acc": avg_success_rate}
