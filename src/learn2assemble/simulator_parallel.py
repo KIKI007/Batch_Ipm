@@ -24,6 +24,7 @@ def ipm_simulate_parallel_proc(device_str,
     torch.set_float32_matmul_precision('high')
     device = torch.device(device_str)
     ipm_settings = ipm_update_device(ipm_settings_cpu, device)
+    ipm_precondition(ipm_settings)
     warm_states = ipm_empty_states(ipm_settings['n_part'], ipm_settings['boundary_part_ids'], n_batch)
     ipm_warmup(warm_states, ipm_settings)
     out_queue.put(f"{device_str}: Warmup Done")
