@@ -64,11 +64,11 @@ def load_assembly(in_, out_, return_dict):
     while True:
         sol_file = in_.get()
 
-        obj_id = sol_file.split('_')[2]
-        sol_id = sol_file.split('_')[4].split('.')[0]
-
         if sol_file is None:
             break
+
+        obj_id = sol_file.split('_')[2]
+        sol_id = sol_file.split('_')[4].split('.')[0]
 
         # load geometry
         foldername = os.path.join(assembly_folder, f"Thingi10K_12_{obj_id}/sol_{sol_id}")
