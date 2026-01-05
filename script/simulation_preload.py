@@ -50,7 +50,7 @@ def load_assembly(sol_file):
 
     # init ipm
     ipm_settings = ipm_init(parts, contacts, default_settings)
-    ipm_settings_cpu = ipm_update_device(ipm_settings, 'device')
+    ipm_settings_cpu = ipm_update_device(ipm_settings, 'cpu')
 
     return ipm_settings_cpu
 
