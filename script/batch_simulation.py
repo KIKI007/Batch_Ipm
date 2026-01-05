@@ -56,7 +56,7 @@ def test_instance(obj_id, sol_id, devices=None):
     n_gpu = len(devices)
 
     # for h800
-    n_batch = 2048
+    n_batch = 1024
     n_batch *= n_gpu
 
     # compute contacts
@@ -73,7 +73,7 @@ def test_instance(obj_id, sol_id, devices=None):
     if not ipm_search_parameters(ipm_settings, part_states, 512, 0.9):
         return False
     # update settings
-    ipm_settings_cpu = ipm_update_device(ipm_settings, 'cpu')
+    #ipm_settings_cpu = ipm_update_device(ipm_settings, 'cpu')
 
     dataloader = DataLoader(
         TensorDataset(part_states),
@@ -85,6 +85,11 @@ def test_instance(obj_id, sol_id, devices=None):
     torch.cuda.synchronize()
     start_timer = perf_counter()
 
+    list_ipm_settings = []
+    for device in devices:
+        new_settings = ipm_update_device(ipm_settings, device)
+        list_ipm_settings.append(new_settings)
+
     tot_success = 0
     with tqdm(total=len(dataloader)) as progress:
         for part_states in dataloader:
@@ -92,7 +97,7 @@ def test_instance(obj_id, sol_id, devices=None):
             part_states = part_states[0]
             test_states, n_test_sub = ipm_get_states(part_states, ipm_settings['boundary_part_ids'], n_sample=n_batch)
             # simulation
-            _, stable_fp32 = ipm_simulate_parallel(test_states, ipm_settings_cpu, devices)
+            _, stable_fp32 = ipm_simulate_parallel(test_states, list_ipm_settings)
             stable_fp32 = stable_fp32[: n_test_sub]
             # evaluation
             tot_success += torch.sum(stable_fp32).item()

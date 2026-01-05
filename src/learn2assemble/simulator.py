@@ -276,14 +276,14 @@ def ipm_sort_states(part_states, ascend = True):
     inds = torch.tensor(inds, device=part_states.device, dtype=torch.long)
     return part_states[inds, :]
 
-def ipm_get_states(part_states, boundart_part_ids, n_sample):
+def ipm_get_states(part_states, boundary_part_ids, n_sample):
     if n_sample <= 0:
         return None
     if (n_sample & (n_sample - 1)) != 0:
         n_sample = int(2 ** np.ceil(np.log2(n_sample)))
         print("change num sample to ", n_sample)
 
-    test_states = ipm_empty_states(part_states.shape[1], boundart_part_ids, n_sample)
+    test_states = ipm_empty_states(part_states.shape[1], boundary_part_ids, n_sample)
     test_states_sub = part_states[: min(part_states.shape[0], n_sample):, :]
     n_test_sub = test_states_sub.shape[0]
     test_states[:n_test_sub, :] = test_states_sub
@@ -507,10 +507,10 @@ def ipm_update_device(ipm, device):
     new_ipm = {}
     for name, val in ipm.items():
         if torch.is_tensor(val):
-            new_ipm[name] = val.clone().to(device)
+            new_ipm[name] = val.clone().to(device).share_memory_()
         else:
             new_ipm[name] = copy.deepcopy(val)
-    new_ipm["device"] = device
+    new_ipm["device"] = torch.device(device)
     return new_ipm
 
 def ipm_simulate(batch_part_states: list[dict], ipm_settings):
@@ -603,36 +603,31 @@ def ipm_simulate(batch_part_states: list[dict], ipm_settings):
     end_timer('ipm')
     return velocity.cpu(), (velocity_inf_nrm < ipm.velocity_tol).cpu()
 
-def ipm_simulate_parallel_proc(job_id, device, part_states, ipm_settings_cpu, return_dict):
-    if device.type == 'cuda' and ipm_settings_cpu['float_type'] == torch.float32:
-        torch.set_float32_matmul_precision('high')
-    ipm_settings = ipm_update_device(ipm_settings_cpu, device)
-    velocity, stable_flag = ipm_simulate(part_states, ipm_settings)
-    return_dict[job_id] = (velocity, stable_flag)
+def ipm_simulate_parallel_proc(job_id, queue): #ipm_settings, return_dict):
+    torch.set_float32_matmul_precision('high')
+    #velocity, stable_flag = ipm_simulate(part_states, ipm_settings)
+    part_states = torch.zeros((10, 10), device = 'cuda:0', dtype = torch.long)
+    part_states = part_states.share_memory_()
+    queue.put((job_id, part_states))
 
-def ipm_simulate_parallel(batch_part_states: list[dict], ipm_settings_cpu, devices):
-    n_parallel = len(devices)
+def ipm_simulate_parallel(batch_part_states: torch.tensor, list_ipm_settings):
+    n_parallel = len(list_ipm_settings)
     n_state_per_process = batch_part_states.shape[0] // n_parallel
-    manager = mp.Manager()
-    return_dict = manager.dict()
 
-    jobs = []
+    return_dict = {}
     for id in range(n_parallel):
+        ipm_settings = list_ipm_settings[id]
+        device = torch.device(ipm_settings['device'])
         if id != n_parallel - 1:
-            part_states = batch_part_states[id * n_state_per_process: n_state_per_process * (id + 1), :].cpu()
+            inds = torch.arange(id * n_state_per_process, n_state_per_process * (id + 1), device = batch_part_states.device, dtype = torch.long)
         else:
             # last take all
-            part_states = batch_part_states[id * n_state_per_process:, :].cpu()
-        device = torch.device(devices[id])
-        p = mp.Process(target=ipm_simulate_parallel_proc,
-                       args=(id, device, part_states, ipm_settings_cpu, return_dict))
-        jobs.append(p)
-        p.start()
+            inds = torch.arange(id * n_state_per_process, batch_part_states.shape[0], device = batch_part_states.device, dtype = torch.long)
+        part_states = batch_part_states[inds, :].to(device = device)
+        return_dict = ipm_simulate(part_states, ipm_settings)
 
     velocity = []
     stable_flag = []
-    for proc in jobs:
-        proc.join()
     for id in range(n_parallel):
         velocity.append(return_dict[id][0])
         stable_flag.append(return_dict[id][1])
@@ -775,15 +770,15 @@ if __name__ == '__main__':
     ipm_settings = ipm_init(parts, contacts, default_settings)
     end_timer('init ipm')
 
-    ipm_settings_cpu = ipm_update_device(ipm_settings, 'cpu')
+    ipm_settings = [ipm_update_device(ipm_settings, 'cuda:0')]
 
     if torch.cuda.is_available():
         torch.cuda.synchronize()
     timer = perf_counter()
 
-    devices = ["cuda:0", "cuda:1"]
+    #devices = ["cuda:0", "cuda:1"]
     # devices = ["cuda:0"]
-    v_fp32, stable_fp32 = ipm_simulate_parallel(part_states, ipm_settings_cpu, devices)
+    v_fp32, stable_fp32 = ipm_simulate_parallel(part_states, ipm_settings)
     #v_fp32, stable_fp32 = simulate(parts, contacts, part_states, default_settings)
 
     if torch.cuda.is_available():

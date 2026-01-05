@@ -65,7 +65,7 @@ def test_instance(obj_id, sol_id, ipm=True):
     n_state = part_states.shape[0]
     print("num of states:", n_state)
     # search best parameters
-    if not ipm_search_parameters(ipm_settings, part_states,  32,0.9):
+    if not ipm_search_parameters(ipm_settings, part_states,  512,0.9):
         return False
 
     dataloader = DataLoader(
@@ -114,13 +114,13 @@ sol_files.sort()
 sol_files = sol_files[::-1]
 
 # skip
-for id in range(len(sol_files)):
-    sol_file = sol_files[id]
-    obj_id = sol_file.split('_')[2]
-    sol_id = sol_file.split('_')[4].split('.')[0]
-    if obj_id == "2426":
-        sol_files = sol_files[id:-1]
-        break
+# for id in range(len(sol_files)):
+#     sol_file = sol_files[id]
+#     obj_id = sol_file.split('_')[2]
+#     sol_id = sol_file.split('_')[4].split('.')[0]
+#     if obj_id == "2426":
+#         sol_files = sol_files[id:-1]
+#         break
 
 for sol_file in sol_files:
     obj_id = sol_file.split('_')[2]
