@@ -165,8 +165,8 @@ def ipm_search_parameters_parallel(ipm_settings: dict,
     n_pcg_it = ipm_settings["n_pcg_iter"]
     best_acc = 0.0
     sim_datas = []
-    #scale_list = [1, 1.5, 2, 2.5, 3, 3.5, 4]
-    scale_list = [1, 2]
+    scale_list = [1, 1.5, 2, 2.5, 3, 3.5, 4]
+    #scale_list = [1, 2]
     for id, scale in enumerate(scale_list):
         n_pcg_iter = int(n_pcg_it * scale)
         sim_datas.append((id, test_states, n_test_sub, n_pcg_iter))
