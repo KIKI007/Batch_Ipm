@@ -80,7 +80,7 @@ if __name__ == "__main__":
     sol_files = [f for f in listdir(curriculumn_folder) if isfile(join(curriculumn_folder, f))]
     sol_files.sort()
     sol_files = sol_files[::-1]
-    sol_files = sol_files[:64]
+    sol_files = sol_files[:10]
 
     dict_ipm_settings = parallel_load_assembly(sol_files, n_worker=32)
     dict_part_states = load_states(sol_files)
