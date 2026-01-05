@@ -129,6 +129,13 @@ def test_instance(sol_file, ipm_settings_cpu):
 
     return True
 
+def compute_memory(ipm_settings):
+    total_memory = 0
+    for name, val in ipm_settings.items():
+        if torch.is_tensor(val):
+            total_memory += val.nelement() * val.element_size()
+    return total_memory / 1024.0 / 1024.0
+
 if __name__ == "__main__":
     sol_files = [f for f in listdir(curriculumn_folder) if isfile(join(curriculumn_folder, f))]
     sol_files.sort()
@@ -151,7 +158,7 @@ if __name__ == "__main__":
         for sol_file in sol_files:
             ipm_settings_cpu = load_assembly(sol_file)
             dict_ipm_settings[sol_file] = ipm_settings_cpu
-            memory = asizeof.asizeof(dict_ipm_settings[sol_file])/1024.0/1024.0
+            memory = compute_memory(ipm_settings_cpu)
             progress.set_postfix_str(f"{memory:.2e}")
             progress.update()
 
