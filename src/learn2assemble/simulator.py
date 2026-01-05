@@ -749,20 +749,17 @@ if __name__ == '__main__':
     torch.manual_seed(0)
     name = "tetris-999"
     parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + f"/{name}")
-    default_settings['env']['boundary_part_ids'] = [len(parts) - 1]
+    boundary = [len(parts) - 1]
+    default_settings['env']['boundary_part_ids'] = boundary
 
     filename = os.path.join(RESOURCE_DIR, f"curriculum/{name}.pt")
     part_states = torch.load(filename)['input']
     #part_states[:, 10] = 0
     #part_states[:, 31] = 0
 
-    # choose the max parts
-    inds = torch.sum(part_states, dim=1).cpu().numpy()
-    inds = np.argsort(inds).tolist()[::-1]
-    part_states = part_states[inds, :]
-
-    # random
-    part_states = part_states[:n_batch, :]
+    # sample
+    part_states = ipm_sort_states(part_states, False)
+    part_states = ipm_get_states(part_states, boundary, n_batch)
 
     # default_settings['gurobi'] = {}
     default_settings['ipm'] = {
