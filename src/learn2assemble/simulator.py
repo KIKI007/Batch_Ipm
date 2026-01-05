@@ -495,9 +495,9 @@ def ipm_solve_rhs(ipm, s, z, invP, v1, v2, v3, n_iter, dx=None):
         uk = invP * rk
         # if rel < ipm.rel_eps:
         #     break
-        abs_ = torch.max(dx_rk)
-        if abs_ < ipm.kkt_conv_eps / 10:
-            break
+        # abs_ = torch.max(dx_rk)
+        # if abs_ < ipm.kkt_conv_eps / 10:
+        #     break
 
     ds = v3 - G_(dx, *rbeG)
     dz = (v2 - z * ds) / s
@@ -592,10 +592,10 @@ def ipm_simulate(batch_part_states: list[dict], ipm_settings):
         # r1, r2, r3 = r1[:, flag], r2[:, flag], r3[:, flag]
 
         #rel_ = torch.max(torch.abs(kkt_res_best - pre_res) / pre_res)
-        abs_ = torch.max(kkt_res_best)
-        #print(rel_, abs_)
-        if abs_ < ipm.kkt_conv_eps:
-            break
+        # abs_ = torch.max(kkt_res_best)
+        # #print(rel_, abs_)
+        # if abs_ < ipm.kkt_conv_eps:
+        #     break
         end_timer('update')
 
     xclip = torch.clip(result_x, xl, xu)
