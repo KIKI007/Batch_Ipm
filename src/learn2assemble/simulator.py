@@ -196,6 +196,7 @@ def ipm_contacts(ipm, parts, contacts, density, boundary_part_ids):
 def ipm_precondition(ipm):
     device = ipm["device"]
     float_type = ipm["float_type"]
+
     # compute pre-conditioner
     nx = ipm['nλn'] * (ipm["nt"] + 1) + ipm["nf"]
     rbeG = ipm["nλn"], ipm["nt"], ipm["nf"], ipm["mu"]
@@ -213,7 +214,6 @@ def ipm_precondition(ipm):
         ipm['invH'] = torch.cholesky_inverse(cholesky_H).to(device = device, dtype=float_type)
     else:
         cholesky_H = torch.linalg.cholesky(H)
-        #ipm['invH'] = torch.cholesky_inverse(cholesky_H)
         ipm['cholesky_H'] = cholesky_H
 
 def ipm_init(parts: list[Trimesh],

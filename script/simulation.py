@@ -33,7 +33,7 @@ def test_instance(obj_id, sol_id, ipm=True):
     learn2assemble.simulator.logger = {
         'timer': {},
         'log': {},
-        'activate': True
+        'activate': False
     }
     # test
     default_settings['rbe']['mu'] = 0.2
@@ -114,7 +114,7 @@ def test_instance(obj_id, sol_id, ipm=True):
 
     with open('result.json', 'w') as f:
         json.dump(result_table, f, indent=4)
-    print_logger(1)
+    #print_logger(1)
 
     return True
 
