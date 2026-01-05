@@ -18,7 +18,7 @@ logger = {
 if platform.system() == 'Windows' or platform.system() == 'Darwin':
     disable_compile = True
 else:
-    disable_compile = True
+    disable_compile = False
 
 def inf_norm(x):
     return torch.max(torch.abs(x), dim=0).values
