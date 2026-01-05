@@ -58,7 +58,6 @@ def test_instance(obj_id, sol_id, devices=None):
     if devices is None:
         gpus = np.arange(torch.cuda.device_count())
         devices = [f"cuda:{gpu_id}" for gpu_id in gpus]
-    n_gpu = len(devices)
 
     # for h800
     n_batch = 512
