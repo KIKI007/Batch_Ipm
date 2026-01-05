@@ -15,11 +15,6 @@ logger = {
     'activate': True,
 }
 
-if platform.system() == 'Windows' or platform.system() == 'Darwin':
-    disable_compile = True
-else:
-    disable_compile = False
-
 def inf_norm(x):
     return torch.max(torch.abs(x), dim=0).values
 
@@ -52,7 +47,6 @@ def print_logger(nbatch=1.0, names=[]):
                 if name in logger['log']:
                     print(name, f":\t\t\t {logger['log'][name] / nbatch:.3e}")
 
-@torch.compile(disable=disable_compile)
 def GT_(p, nλn, nt, nf, mu):
     nλt = nλn * nt
     nx = nλn + nλt + nf
@@ -63,7 +57,6 @@ def GT_(p, nλn, nt, nf, mu):
     λ3 = p[nλn + nx:]
     return λ3 - λ2 + λ0
 
-@torch.compile(disable=disable_compile)
 def G_(p, nλn, nt, nf, mu):
     nλt = nλn * nt
     λn, λt = p[:nλn, :], p[nλn: nλn + nλt, :]
@@ -73,7 +66,6 @@ def G_(p, nλn, nt, nf, mu):
     λn.index_add_(0, inds, λt, alpha=-1.0)
     return torch.vstack([-λn, -p, p])
 
-@torch.compile(disable=disable_compile)
 def GTZSG_(p, ZS, nλn, nt, nf, mu):
     nbatch = p.shape[1]
     nλt = nλn * nt
@@ -98,8 +90,7 @@ def GTZSG_(p, ZS, nλn, nt, nf, mu):
     λ3 = ZSGp[nλn + nx:]
     return λ3 - λ2 + λ0
 
-@torch.compile(disable=disable_compile)
-def Q_(p, nλn, nt, iA, iB, nA, nB, invM, Q):
+def Q_(p, nλn, nt, iA, iB, nA, nB, invM):
     batch = p.shape[1]
     nλt = nλn * nt
     λ, f = p[: nλn + nλt, :], -p[nλn + nλt:, :]
@@ -232,7 +223,7 @@ def ipm_init(parts: list[Trimesh],
     # compute pre-conditioner
     nx = ipm['nλn'] * (ipm["nt"] + 1) + ipm["nf"]
     rbeG = ipm["nλn"], ipm["nt"], ipm["nf"], ipm["mu"]
-    rbeQ = ipm['nλn'], ipm['nt'], ipm['iAs'], ipm['iBs'], ipm['nAs'], ipm['nBs'], ipm['invM'], None
+    rbeQ = ipm['nλn'], ipm['nt'], ipm['iAs'], ipm['iBs'], ipm['nAs'], ipm['nBs'], ipm['invM']
     p = torch.eye(nx, device=device, dtype=float_type)
     G = G_(p, *rbeG)
     ipm['GG'] = G * G
@@ -386,13 +377,13 @@ def ipm_evaluate_result(ipm, xclip, ps):
 
 def ipm_start_solve(ipm, h, q):
     rbe = ipm.nλn, ipm.nt, ipm.nf, ipm.mu
-    b = GT_(h, *rbe) - q
+    b = ipm.GT_(h, *rbe) - q
     if h.device.type == 'mps':
         x = ipm.invH @ b # for mac
     else:
         x = torch.cholesky_solve(b, ipm.cholesky_H)
 
-    oldz = G_(x, *rbe) - h
+    oldz = ipm.G_(x, *rbe) - h
     alpha_p = torch.max(oldz, 0).values
     flag = (alpha_p < 0).type(h.dtype).repeat(oldz.shape[0], 1)
     s = flag * (-oldz) + (1 - flag) * (-oldz + (1 + alpha_p))
@@ -404,10 +395,10 @@ def ipm_start_solve(ipm, h, q):
 
 def ipm_kkt_res(ipm, q, h, x, s, z):
     rbe = ipm.nλn, ipm.nt, ipm.nf, ipm.mu
-    rbeQ = ipm.nλn, ipm.nt, ipm.iAs, ipm.iBs, ipm.nAs, ipm.nBs, ipm.invM, ipm.Q
-    r1 = Q_(x, *rbeQ) + q + GT_(z, *rbe)
+    rbeQ = ipm.nλn, ipm.nt, ipm.iAs, ipm.iBs, ipm.nAs, ipm.nBs, ipm.invM
+    r1 = ipm.Q_(x, *rbeQ) + q + ipm.GT_(z, *rbe)
     r2 = s * z
-    r3 = G_(x, *rbe) + s - h
+    r3 = ipm.G_(x, *rbe) + s - h
     kkt_res = inf_norm(torch.vstack([r1, r2, r3]))
     return r1, r2, r3, kkt_res
 
@@ -418,7 +409,6 @@ def ipm_precond(ipm, s, z):
     invM = 1.0 / invM
     return invM
 
-@torch.compile(disable=disable_compile)
 def ipm_linesearch(s, ds, z, dz, n_sample=32):
     device = s.device
     alpha = torch.linspace(0, 1, n_sample, device=device, dtype=s.dtype)
@@ -430,25 +420,23 @@ def ipm_linesearch(s, ds, z, dz, n_sample=32):
     ind = torch.max(inds, dim=0).values.to(torch.long)
     return alpha[ind]
 
-@torch.compile(disable=disable_compile)
-def ipm_centering_params(s, z, ds_a, dz_a, n_sample):
+def ipm_centering_params(ipm, s, z, ds_a, dz_a, n_sample):
     """duality gap + cc term in predictor-corrector PDIP"""
     sz = torch.sum(s * z, dim=0)
     mu = sz / s.shape[0]
-    alpha = ipm_linesearch(s, ds_a, z, dz_a, n_sample=n_sample)
+    alpha = ipm.linesearch(s, ds_a, z, dz_a, n_sample=n_sample)
     sigma = torch.sum((s + alpha * ds_a) * (z + alpha * dz_a), dim=0) / sz
     sigma = sigma ** 3
     return sigma, mu
 
-@torch.compile(disable=disable_compile)
 def ipm_solve_rhs(ipm, s, z, invP, v1, v2, v3, n_iter, dx=None):
     device = ipm.device
 
     rbeG = ipm.nλn, ipm.nt, ipm.nf, ipm.mu
-    rbeQ = ipm.nλn, ipm.nt, ipm.iAs, ipm.iBs, ipm.nAs, ipm.nBs, ipm.invM, ipm.Q
+    rbeQ = ipm.nλn, ipm.nt, ipm.iAs, ipm.iBs, ipm.nAs, ipm.nBs, ipm.invM
 
     ZS = z / s
-    b = GT_((z * v3 - v2) / s, *rbeG) + v1
+    b = ipm.GT_((z * v3 - v2) / s, *rbeG) + v1
 
     if dx is None:
         dx = torch.zeros_like(b)
@@ -456,7 +444,7 @@ def ipm_solve_rhs(ipm, s, z, invP, v1, v2, v3, n_iter, dx=None):
         rk = b.clone()
     else:
         xk = dx.clone()
-        rk = b - (GTZSG_(dx, ZS, *rbeG) + Q_(dx, *rbeQ))
+        rk = b - (ipm.GTZSG_(dx, ZS, *rbeG) + ipm.Q_(dx, *rbeQ))
         dx = torch.zeros_like(b)
 
     dx_rk = torch.ones(b.shape[1], device=device, dtype=b.dtype) * 1E9
@@ -468,7 +456,7 @@ def ipm_solve_rhs(ipm, s, z, invP, v1, v2, v3, n_iter, dx=None):
     for k in range(m):
         for t in range(ipm.n_pcg_eval_iter):
             # fast computation
-            Apk = GTZSG_(pk, ZS, *rbeG) + Q_(pk, *rbeQ)
+            Apk = ipm.GTZSG_(pk, ZS, *rbeG) + ipm.Q_(pk, *rbeQ)
 
             ru = torch.sum(rk * uk, dim=0)
             ak = ru / torch.sum(pk * Apk, dim=0)
@@ -485,13 +473,13 @@ def ipm_solve_rhs(ipm, s, z, invP, v1, v2, v3, n_iter, dx=None):
         dx_rk[flag] = error[flag]
 
         # recompute the residual to avoid numerical errors
-        rk = b - (GTZSG_(xk, ZS, *rbeG) + Q_(xk, *rbeQ))
+        rk = b - (ipm.GTZSG_(xk, ZS, *rbeG) + ipm.Q_(xk, *rbeQ))
         uk = invP * rk
         abs_ = torch.max(dx_rk)
         if abs_ < ipm.kkt_conv_eps / 10:
             break
 
-    ds = v3 - G_(dx, *rbeG)
+    ds = v3 - ipm.G_(dx, *rbeG)
     dz = (v2 - z * ds) / s
     return dx, ds, dz
 
@@ -504,6 +492,13 @@ def ipm_update_device(ipm, device):
             new_ipm[name] = copy.deepcopy(val)
     new_ipm["device"] = torch.device(device)
     return new_ipm
+
+def ipm_compile_functions(ipm_settings, disable_compile = True):
+    ipm_settings['Q_'] = torch.compile(Q_, disable=disable_compile)
+    ipm_settings['G_'] = torch.compile(G_, disable=disable_compile)
+    ipm_settings['GT_'] = torch.compile(GT_, disable=disable_compile)
+    ipm_settings['GTZSG_'] = torch.compile(GTZSG_, disable=disable_compile)
+    ipm_settings['linesearch'] = torch.compile(ipm_linesearch, disable=disable_compile)
 
 def ipm_simulate(batch_part_states: list[dict], ipm_settings):
     # name space
@@ -522,10 +517,13 @@ def ipm_simulate(batch_part_states: list[dict], ipm_settings):
     # initialize ipm x0
     reset_timer('start_solve')
     x, s, z = ipm_start_solve(ipm, h, q)
+    end_timer('start_solve')
+
+    reset_timer('start_kkt_res')
     result_x = torch.zeros_like(x)
     kkt_res_best = torch.ones(batch_part_states.shape[0], device=device, dtype=floatType) * 1E9
     r1, r2, r3, kkt_res = ipm_kkt_res(ipm, q, h, x, s, z)
-    end_timer('start_solve')
+    end_timer('start_kkt_res')
 
     # ipm main loop
     for it in range(ipm.n_iter):
@@ -542,7 +540,7 @@ def ipm_simulate(batch_part_states: list[dict], ipm_settings):
 
         # 3. centering parameters
         reset_timer('center')
-        sigma, mu = ipm_centering_params(s, z, ds_a, dz_a, n_sample=ipm.n_linesearch)
+        sigma, mu = ipm_centering_params(ipm, s, z, ds_a, dz_a, n_sample=ipm.n_linesearch)
         end_timer('center')
 
         # 4. solve kkt 2
@@ -560,7 +558,7 @@ def ipm_simulate(batch_part_states: list[dict], ipm_settings):
 
         # 5. step size and update
         reset_timer('linesearch')
-        alpha = 0.99 * ipm_linesearch(s, ds, z, dz, n_sample=ipm.n_linesearch)
+        alpha = 0.99 * ipm.linesearch(s, ds, z, dz, n_sample=ipm.n_linesearch)
         end_timer('linesearch')
 
         reset_timer('update')
@@ -593,6 +591,18 @@ def ipm_simulate(batch_part_states: list[dict], ipm_settings):
     velocity, velocity_inf_nrm = ipm_evaluate_result(ipm, xclip, ps)
     end_timer('ipm')
     return velocity, (velocity_inf_nrm < ipm.velocity_tol)
+
+def ipm_warmup(batch_part_states: torch.tensor, settings: dict):
+    active = logger['activate']
+    logger['activate'] = False
+    n_iter = settings['n_iter']
+    n_pcg_iter = settings['n_pcg_iter']
+    settings["n_iter"] = 1
+    settings["n_pcg_iter"] = 1
+    ipm_simulate(batch_part_states, settings)
+    settings["n_pcg_iter"] = n_pcg_iter
+    settings["n_iter"] = n_iter
+    logger['activate'] = active
 
 def init_gurobi(parts, contacts, settings: dict):
     params = {
@@ -680,6 +690,11 @@ if __name__ == '__main__':
     from learn2assemble.assembly import load_assembly_from_files, compute_assembly_contacts
     import os
 
+    if platform.system() == 'Windows' or platform.system() == 'Darwin':
+        disable_compile = True
+    else:
+        disable_compile = False
+
     default_settings['rbe']['mu'] = 0.2
     default_settings["assembly"]["contact_shrink_ratio"] = 0.1  # for robustnessly computing the contact surfaces
 
@@ -708,7 +723,6 @@ if __name__ == '__main__':
         "kkt_conv_eps": 1E-4,
         "float_type": torch.float32,
     }
-    logger['activate'] = False
 
     reset_timer('contact')
     contacts = compute_assembly_contacts(parts, default_settings)
@@ -716,6 +730,8 @@ if __name__ == '__main__':
 
     reset_timer('init ipm')
     ipm_settings = ipm_init(parts, contacts, default_settings)
+    ipm_compile_functions(ipm_settings, disable_compile)
+    ipm_warmup(part_states, ipm_settings)
     end_timer('init ipm')
 
     gpus = np.arange(torch.cuda.device_count())
