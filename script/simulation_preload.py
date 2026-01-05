@@ -84,12 +84,9 @@ def load_assembly(in_, out_, return_dict):
         return_dict[sol_file] = ipm_settings
         out_.put((sol_file, compute_memory(ipm_settings)))
 
-def test_instance(sol_file, ipm_settings_cpu):
+def test_instance(sol_file, part_states, ipm_settings_cpu):
     torch.cuda.synchronize()
     start_timer = perf_counter()
-
-    obj_id = sol_file.split('_')[2]
-    sol_id = sol_file.split('_')[4].split('.')[0]
 
     learn2assemble.simulator.logger = {
         'timer': {},
@@ -105,9 +102,6 @@ def test_instance(sol_file, ipm_settings_cpu):
     if ipm_settings_cpu['n_part'] > 80:
         n_batch = 512
 
-    # load curriculum
-    filename = os.path.join(curriculumn_folder, f"Thingi10K_12_{obj_id}_sol_{sol_id}.pt")
-    part_states = torch.load(filename)['input']
     n_state = part_states.shape[0]
     print("num of states:", n_state)
 
@@ -149,6 +143,17 @@ def test_instance(sol_file, ipm_settings_cpu):
 
     return True
 
+def load_states(sol_file):
+    dict_part_states = {}
+    for sol_file in sol_file:
+        # load curriculum
+        obj_id = sol_file.split('_')[2]
+        sol_id = sol_file.split('_')[4].split('.')[0]
+        filename = os.path.join(curriculumn_folder, f"Thingi10K_12_{obj_id}_sol_{sol_id}.pt")
+        part_states = torch.load(filename)['input']
+        dict_part_states[sol_file] = part_states
+    return dict_part_states
+
 def parallel_load_assembly(sol_files, n_worker = 64):
     manager = mp.Manager()
     dict_ipm_settings = manager.dict()
@@ -183,6 +188,7 @@ def parallel_load_assembly(sol_files, n_worker = 64):
     return dict(dict_ipm_settings)
 
 
+
 if __name__ == "__main__":
     os.environ['MKL_THREADING_LAYER'] = 'GNU'
     os.environ['MKL_SERVICE_FORCE_INTEL'] = '1'
@@ -196,7 +202,6 @@ if __name__ == "__main__":
     sol_files = sol_files[::-1]
 
     #sol_files = sol_files[:10]
-
     # skip
     # for id in range(len(sol_files)):
     #     sol_file = sol_files[id]
@@ -206,9 +211,11 @@ if __name__ == "__main__":
     #         sol_files = sol_files[id:-1]
     #         break
 
+
     dict_ipm_settings = parallel_load_assembly(sol_files, n_worker=32)
+    dict_part_states = load_states(sol_files)
 
     with tqdm(total=len(sol_files), position=0) as progress:
         for sol_file in sol_files:
-            test_instance(sol_file, dict_ipm_settings[sol_file])
+            test_instance(sol_file, dict_part_states[sol_file], dict_ipm_settings[sol_file])
             progress.update()

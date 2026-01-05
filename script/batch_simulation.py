@@ -15,7 +15,7 @@ from os import listdir
 import wandb
 import platform
 from tqdm import tqdm
-from simulation_preload import parallel_load_assembly, is_wsl
+from simulation_preload import parallel_load_assembly, is_wsl, load_states
 
 if is_wsl():
     curriculumn_folder = "/mnt/d/curriculum_Thingi10K_12/Thingi10K_12/"
@@ -25,9 +25,7 @@ else:
     assembly_folder = "/scratch/assembly/Thingi10K_12/"
 result_table = []
 
-def test_instance(sol_file, ipm_settings_cpu):
-    obj_id = sol_file.split('_')[2]
-    sol_id = sol_file.split('_')[4].split('.')[0]
+def test_instance(sol_file, part_states, ipm_settings_cpu):
 
     learn2assemble.simulator.logger = {
         'timer': {},
@@ -35,18 +33,13 @@ def test_instance(sol_file, ipm_settings_cpu):
         'activate': False
     }
 
-    # load curriculum
-    filename = os.path.join(curriculumn_folder, f"Thingi10K_12_{obj_id}_sol_{sol_id}.pt")
-    part_states = torch.load(filename)['input']
-    n_state = part_states.shape[0]
-    print("num of states:", n_state)
-
     # gpus
     gpus = np.arange(torch.cuda.device_count())
     devices = [f"cuda:{gpu_id}" for gpu_id in gpus]
 
     # batch_size
-    n_batch = 512
+    n_batch = 1024
+    n_state = part_states.shape[0]
 
     # precondition
     ipm_settings = ipm_update_device(ipm_settings_cpu, 'cuda')
@@ -82,6 +75,8 @@ def test_instance(sol_file, ipm_settings_cpu):
 
     return True
 
+def
+
 if __name__ == "__main__":
     os.environ['MKL_THREADING_LAYER'] = 'GNU'
     os.environ['MKL_SERVICE_FORCE_INTEL'] = '1'
@@ -96,6 +91,7 @@ if __name__ == "__main__":
     sol_files = sol_files[:64]
 
     dict_ipm_settings = parallel_load_assembly(sol_files, n_worker=32)
+    dict_part_states = load_states(sol_files)
 
     # setup wandb
     wandb.login(key="1c4a274de42ea0326b6ac75651a33f2b7cb2d217", relogin=True, force=True)
@@ -104,5 +100,5 @@ if __name__ == "__main__":
     with tqdm(total=len(sol_files), position=0) as progress:
         for sol_file in sol_files:
             print(sol_file)
-            test_instance(sol_file, dict_ipm_settings[sol_file])
+            test_instance(sol_file, dict_part_states[sol_file], dict_ipm_settings[sol_file])
             progress.update()
