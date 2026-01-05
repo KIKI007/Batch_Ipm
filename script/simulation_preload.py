@@ -123,7 +123,7 @@ def test_instance(sol_file, part_states, ipm_settings_cpu):
             stable_fp32 = stable_fp32[: n_test_sub]
             # evaluation
             tot_success += torch.sum(stable_fp32).item()
-            progress.set_postfix_str(torch.sum(stable_fp32) / stable_fp32.shape[0])
+            progress.set_postfix_str(torch.sum(stable_fp32).item() / stable_fp32.shape[0])
             progress.update()
 
     torch.cuda.synchronize()
@@ -201,7 +201,7 @@ if __name__ == "__main__":
     sol_files.sort()
     sol_files = sol_files[::-1]
     sol_files = sol_files[:10]
-    
+
     # skip
     # for id in range(len(sol_files)):
     #     sol_file = sol_files[id]
