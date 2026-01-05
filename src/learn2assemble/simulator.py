@@ -637,20 +637,19 @@ def ipm_simulate_parallel(batch_part_states: torch.tensor, list_ipm_settings, co
         device = torch.device(ipm_settings['device'])
         s = torch.cuda.Stream(device=device)
         streams.append(s)
-        if id != n_parallel - 1:
-            inds = torch.arange(id * n_state_per_process,
-                                n_state_per_process * (id + 1),
-                                device='cpu',
-                                dtype=torch.long)
-        else:
-            # last take all
-            inds = torch.arange(id * n_state_per_process,
-                                batch_part_states.shape[0],
-                                device='cpu',
-                                dtype=torch.long)
-        part_states = batch_part_states[inds, :]
         with torch.cuda.stream(s):
-            part_states = part_states.to(device = device, non_blocking=True)
+            if id != n_parallel - 1:
+                inds = torch.arange(id * n_state_per_process,
+                                    n_state_per_process * (id + 1),
+                                    device='cpu',
+                                    dtype=torch.long)
+            else:
+                # last take all
+                inds = torch.arange(id * n_state_per_process,
+                                    batch_part_states.shape[0],
+                                    device='cpu',
+                                    dtype=torch.long)
+            part_states = batch_part_states[inds, :].to(device = device, non_blocking=True)
             return_dict[id] = compiled_fns[id](part_states, ipm_settings)
 
     velocity = []
