@@ -118,7 +118,6 @@ def test_instance(sol_file, ipm_settings_cpu):
         num_workers=2  # Use 2 subprocesses for loading (adjust as needed)
     )
 
-
     tot_success = 0
     with tqdm(total=len(dataloader), position=1) as progress:
         for part_states in dataloader:

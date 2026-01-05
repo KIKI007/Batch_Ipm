@@ -55,8 +55,8 @@ def test_instance(sol_file, ipm_settings_cpu):
     ipm_settings = ipm_update_device(ipm_settings, 'cpu')
 
     # init simulation
-    simulators = ipm_init_simulate_parallel(ipm_settings_cpu, devices, n_batch)
-    sim_datas = ipm_split_states(ipm_settings_cpu, part_states, n_batch)
+    simulators = ipm_init_simulate_parallel(ipm_settings, devices, n_batch)
+    sim_datas = ipm_split_states(ipm_settings, part_states, n_batch)
     _, _, avg_sim_time, avg_success_rate = ipm_simulate_parallel(sim_datas, simulators)
     ipm_terminate(simulators)
 
