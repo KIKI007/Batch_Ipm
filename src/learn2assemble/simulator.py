@@ -263,12 +263,41 @@ def ipm_init(parts: list[Trimesh],
     ipm['pre-computed'] = True
     return ipm
 
-def ipm_search_parameters(ipm_settings: dict, part_states, acc_tol=0.9):
+def ipm_empty_states(n_part, bounary_part_ids, n_batch):
+    padding = torch.zeros((n_batch, n_part), device="cpu", dtype=torch.long)
+    padding[:, bounary_part_ids] = 2
+    return padding
+
+def ipm_sort_states(part_states, ascend = True):
+    inds = torch.sum((part_states >= 1), dim=1).cpu().numpy()
+    inds = np.argsort(inds).tolist()
+    if not ascend:
+        inds = inds[::-1]
+    inds = torch.tensor(inds, device=part_states.device, dtype=torch.long)
+    return part_states[inds, :]
+
+def ipm_get_states(part_states, boundart_part_ids, n_sample):
+    if n_sample <= 0:
+        return None
+    if (n_sample & (n_sample - 1)) != 0:
+        n_sample = int(2 ** np.ceil(np.log2(n_sample)))
+        print("change num sample to ", n_sample)
+
+    test_states = ipm_empty_states(part_states.shape[1], boundart_part_ids, n_sample)
+    test_states_sub = part_states[: min(part_states.shape[0], n_sample):, :]
+    n_test_sub = test_states_sub.shape[0]
+    test_states[:n_test_sub, :] = test_states_sub
+    return test_states, n_test_sub
+
+def ipm_search_parameters(ipm_settings: dict, part_states, nsample = 32, acc_tol=0.9):
+    new_states = ipm_sort_states(part_states, ascend=False)
+    test_states, n_test_sub = ipm_get_states(new_states, ipm_settings['boundary_part_ids'], n_sample = nsample)
     n_pcg_it = ipm_settings["n_pcg_iter"]
     best_acc = 0.0
     for scale in [1, 1.5, 2, 2.5, 3, 3.5, 4]:
         ipm_settings["n_pcg_iter"] = int(n_pcg_it * scale)
-        _, flag = ipm_simulate(part_states, ipm_settings)
+        _, flag = ipm_simulate(test_states, ipm_settings)
+        flag = flag[:n_test_sub]
         acc = torch.sum(flag).item() / flag.shape[0]
         best_acc = max(best_acc, acc)
         print("num pcg iter = ", ipm_settings["n_pcg_iter"], f" with a {best_acc: .2f} success rate")

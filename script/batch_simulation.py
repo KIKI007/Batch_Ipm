@@ -4,7 +4,7 @@ import numpy as np
 
 from learn2assemble import default_settings
 from learn2assemble.assembly import load_assembly_from_files, compute_assembly_contacts
-from learn2assemble.simulator import ipm_init, ipm_search_parameters, ipm_update_device, ipm_simulate_parallel
+from learn2assemble.simulator import ipm_init, ipm_search_parameters, ipm_update_device, ipm_simulate_parallel, ipm_get_states
 from learn2assemble.render import *
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
@@ -17,11 +17,12 @@ from os.path import isfile, join, isdir
 from os import listdir
 import wandb
 
-curriculumn_folder = "/scratch/assembly/curriculum/"
-assembly_folder = "/scratch/assembly/Thingi10K_12/"
+#curriculumn_folder = "/scratch/assembly/curriculum/"
+#assembly_folder = "/scratch/assembly/Thingi10K_12/"
+curriculumn_folder = "/mnt/d/curriculum_Thingi10K_12/Thingi10K_12/"
+assembly_folder = "/mnt/d/assembly_Thingi10K_12/Thingi10K_12/"
 
 result_table = []
-
 
 def test_instance(obj_id, sol_id, devices=None):
     learn2assemble.simulator.logger = {
@@ -65,13 +66,11 @@ def test_instance(obj_id, sol_id, devices=None):
     # load curriculum
     filename = os.path.join(curriculumn_folder, f"Thingi10K_12_{obj_id}_sol_{sol_id}.pt")
     part_states = torch.load(filename)['input']
-    inds = torch.sum(part_states, dim=1).cpu().numpy()
-    inds = torch.tensor(np.argsort(inds).tolist())
-    part_states = part_states[inds, :]
+    n_state = part_states.shape[0]
+    print("num of states:", n_state)
 
     # search best parameters
-    n_test = min(part_states.shape[0], 512)
-    if not ipm_search_parameters(ipm_settings, part_states[-n_test:], 0.95):
+    if not ipm_search_parameters(ipm_settings, part_states, 512, 0.9):
         return False
     # update settings
     ipm_settings_cpu = ipm_update_device(ipm_settings, 'cpu')
@@ -87,37 +86,37 @@ def test_instance(obj_id, sol_id, devices=None):
     start_timer = perf_counter()
 
     tot_success = 0
-    print("n_state:\t", inds.shape[0])
     with tqdm(total=len(dataloader)) as progress:
         for part_states in dataloader:
+            # padding
             part_states = part_states[0]
-            padding = torch.zeros((n_batch, len(parts)), device='cpu', dtype=torch.long)
-            padding[:, ipm_settings["boundary_part_ids"]] = 2
-            padding[: part_states.shape[0], :] = part_states
-            _, stable_fp32 = ipm_simulate_parallel(padding, ipm_settings_cpu, devices)
-            stable_fp32 = stable_fp32[: part_states.shape[0]]
+            test_states, n_test_sub = ipm_get_states(part_states, ipm_settings['boundary_part_ids'], n_sample=n_batch)
+            # simulation
+            _, stable_fp32 = ipm_simulate_parallel(test_states, ipm_settings_cpu, devices)
+            stable_fp32 = stable_fp32[: n_test_sub]
+            # evaluation
             tot_success += torch.sum(stable_fp32).item()
-            progress.set_postfix_str(torch.sum(stable_fp32).item() / stable_fp32.shape[0])
+            progress.set_postfix_str(torch.sum(stable_fp32) / stable_fp32.shape[0])
             progress.update()
 
     torch.cuda.synchronize()
     print("time:\t", perf_counter() - start_timer)
-    print("success rate:\t", tot_success / inds.shape[0])
+    print("success rate:\t", tot_success / n_state)
     print("\n")
 
     result_table.append({"name": obj_id,
                          "sol_id": sol_id,
                          "n_parts": len(parts),
-                         "n_states": inds.shape[0],
+                         "n_states": n_state,
                          "time": perf_counter() - start_timer,
-                         "acc": tot_success / inds.shape[0]}
+                         "acc": tot_success / n_state}
                         )
 
     # log wandb
     wandb.log({"n_parts": len(parts),
-               "n_states": inds.shape[0],
+               "n_states": n_state,
                "time": perf_counter() - start_timer,
-               "acc": tot_success / inds.shape[0]}
+               "acc": tot_success / n_state}
               )
 
     with open('result.json', 'w') as f:
