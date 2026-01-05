@@ -601,7 +601,7 @@ def ipm_simulate(batch_part_states: list[dict], ipm_settings):
     xclip = torch.clip(result_x, xl, xu)
     velocity, velocity_inf_nrm = ipm_evaluate_result(ipm, xclip, ps)
     end_timer('ipm')
-    return velocity.cpu(), (velocity_inf_nrm < ipm.velocity_tol).cpu()
+    return velocity, (velocity_inf_nrm < ipm.velocity_tol)
 
 def ipm_simulate_parallel(batch_part_states: torch.tensor, list_ipm_settings):
     n_parallel = len(list_ipm_settings)
@@ -637,8 +637,8 @@ def ipm_simulate_parallel(batch_part_states: torch.tensor, list_ipm_settings):
         streams[id].synchronize()
 
     for id in range(n_parallel):
-        velocity.append(return_dict[id][0])
-        stable_flag.append(return_dict[id][1])
+        velocity.append(return_dict[id][0].cpu())
+        stable_flag.append(return_dict[id][1].cpu())
 
     velocity = torch.hstack(velocity)
     stable_flag = torch.hstack(stable_flag)
