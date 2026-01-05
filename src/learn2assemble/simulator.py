@@ -493,7 +493,11 @@ def ipm_update_device(ipm, device):
     new_ipm["device"] = torch.device(device)
     return new_ipm
 
-def ipm_compile_functions(ipm_settings, disable_compile = True):
+def ipm_compile_functions(ipm_settings):
+    if platform.system() == 'Windows' or platform.system() == 'Darwin':
+        disable_compile = True
+    else:
+        disable_compile = False
     ipm_settings['Q_'] = torch.compile(Q_, disable=disable_compile)
     ipm_settings['G_'] = torch.compile(G_, disable=disable_compile)
     ipm_settings['GT_'] = torch.compile(GT_, disable=disable_compile)
@@ -689,11 +693,6 @@ if __name__ == '__main__':
     from learn2assemble.render import *
     from learn2assemble.assembly import load_assembly_from_files, compute_assembly_contacts
     import os
-
-    if platform.system() == 'Windows' or platform.system() == 'Darwin':
-        disable_compile = True
-    else:
-        disable_compile = False
 
     default_settings['rbe']['mu'] = 0.2
     default_settings["assembly"]["contact_shrink_ratio"] = 0.1  # for robustnessly computing the contact surfaces

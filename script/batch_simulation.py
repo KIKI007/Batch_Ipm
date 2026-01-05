@@ -4,12 +4,10 @@ import numpy as np
 
 from learn2assemble import default_settings
 from learn2assemble.assembly import load_assembly_from_files, compute_assembly_contacts
-from learn2assemble.simulator import ipm_init, ipm_search_parameters, ipm_update_device, ipm_simulate_parallel, ipm_get_states
+from learn2assemble.simulator_parallel import ipm_simulate_parallel
+from learn2assemble.simulator import ipm_init, ipm_search_parameters, ipm_update_device, ipm_compile_functions
 from learn2assemble.render import *
-from torch.utils.data import DataLoader, TensorDataset
-from tqdm import tqdm
 import torch
-import platform
 import os
 import learn2assemble
 import torch.multiprocessing as mp
@@ -62,6 +60,8 @@ def test_instance(obj_id, sol_id, devices=None):
     # compute contacts
     contacts = compute_assembly_contacts(parts, default_settings)
     ipm_settings = ipm_init(parts, contacts, default_settings)
+    ipm_settings_cpu = ipm_update_device(ipm_settings, 'cpu')
+    ipm_compile_functions(ipm_settings)
 
     # load curriculum
     filename = os.path.join(curriculumn_folder, f"Thingi10K_12_{obj_id}_sol_{sol_id}.pt")
@@ -70,58 +70,27 @@ def test_instance(obj_id, sol_id, devices=None):
     print("num of states:", n_state)
 
     # search best parameters
+    # update settings
     if not ipm_search_parameters(ipm_settings, part_states, 512, 0.9):
         return False
-    # update settings
-    #ipm_settings_cpu = ipm_update_device(ipm_settings, 'cpu')
+    else:
+        ipm_settings_cpu['n_pcg_iter'] = ipm_settings_cpu['n_pcg_iter']
 
-    dataloader = DataLoader(
-        TensorDataset(part_states),
-        batch_size=n_batch,  # How many samples per batch
-        shuffle=False,  # Shuffle data every epoch
-        num_workers=2  # Use 2 subprocesses for loading (adjust as needed)
-    )
-
-    torch.cuda.synchronize()
-    start_timer = perf_counter()
-
-    list_ipm_settings = []
-    for device in devices:
-        new_settings = ipm_update_device(ipm_settings, device)
-        list_ipm_settings.append(new_settings)
-
-    tot_success = 0
-    with tqdm(total=len(dataloader)) as progress:
-        for part_states in dataloader:
-            # padding
-            part_states = part_states[0]
-            test_states, n_test_sub = ipm_get_states(part_states, ipm_settings['boundary_part_ids'], n_sample=n_batch)
-            # simulation
-            _, stable_fp32 = ipm_simulate_parallel(test_states, list_ipm_settings)
-            stable_fp32 = stable_fp32[: n_test_sub]
-            # evaluation
-            tot_success += torch.sum(stable_fp32).item()
-            progress.set_postfix_str(torch.sum(stable_fp32) / stable_fp32.shape[0])
-            progress.update()
-
-    torch.cuda.synchronize()
-    print("time:\t", perf_counter() - start_timer)
-    print("success rate:\t", tot_success / n_state)
-    print("\n")
+    _, _, avg_sim_time, avg_success_rate = ipm_simulate_parallel(part_states, ipm_settings_cpu, devices, n_batch)
 
     result_table.append({"name": obj_id,
                          "sol_id": sol_id,
                          "n_parts": len(parts),
                          "n_states": n_state,
-                         "time": perf_counter() - start_timer,
-                         "acc": tot_success / n_state}
+                         "time": avg_sim_time,
+                         "acc": avg_success_rate}
                         )
 
     # log wandb
     wandb.log({"n_parts": len(parts),
                "n_states": n_state,
-               "time": perf_counter() - start_timer,
-               "acc": tot_success / n_state}
+               "time": avg_sim_time,
+               "acc": avg_success_rate}
               )
 
     with open('result.json', 'w') as f:

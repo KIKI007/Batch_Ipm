@@ -1,17 +1,5 @@
-import copy
-from time import perf_counter
-import gurobipy as gp
-import torch
-from gurobipy import GRB
-from sympy.physics.units import velocity
-
-from learn2assemble.rbe import *
-from types import SimpleNamespace
-import platform
-from learn2assemble.rbe import num_vars
-import torch.multiprocessing as mp
 from learn2assemble.simulator import *
-
+from tqdm import tqdm
 
 def ipm_simulate_parallel_proc(device_str,
                                ipm_settings_cpu,
@@ -22,7 +10,7 @@ def ipm_simulate_parallel_proc(device_str,
     torch.set_float32_matmul_precision('high')
     device = torch.device(device_str)
     ipm_settings = ipm_update_device(ipm_settings_cpu, device)
-    ipm_compile_functions(ipm_settings, False)
+    ipm_compile_functions(ipm_settings)
     warm_states = ipm_empty_states(ipm_settings['n_part'], ipm_settings['boundary_part_ids'], n_batch)
     ipm_warmup(warm_states, ipm_settings)
     out_queue.put(f"{device_str}: Warmup Done")
@@ -93,9 +81,21 @@ def ipm_simulate_parallel(batch_part_states: torch.tensor,
                                 batch_part_states.shape[0],
                                 device='cpu',
                                 dtype=torch.long)
+
         part_states = batch_part_states[inds, :]
         part_states, n_sub_states = ipm_get_states(part_states, ipm_settings_cpu['boundary_part_ids'], n_batch)
         in_queue.put((id, part_states, n_sub_states))
+
+    # read the output
+    return_dict = {}
+    num_done = 0
+    with tqdm(total=n_step) as progress:
+        while num_done < n_step:
+            job_id, velocity, stable_flag = out_queue.get()
+            return_dict[job_id] = (velocity, stable_flag)
+            progress.set_postfix_str(torch.sum(stable_flag) / stable_flag.shape[0])
+            progress.update()
+            num_done = num_done + 1
 
     # for stop the solver
     for id in range(n_parallel):
@@ -105,27 +105,24 @@ def ipm_simulate_parallel(batch_part_states: torch.tensor,
     for proc in jobs:
         proc.join()
 
-    # collect data
-    return_dict = {}
-    for id in range(n_parallel):
-        job_id, velocity, stable_flag = out_queue.get()
-        return_dict[job_id] = (velocity, stable_flag)
-
     velocity = []
     stable_flag = []
-    for id in range(n_parallel):
+    for id in range(n_step):
         velocity.append(return_dict[id][0])
         stable_flag.append(return_dict[id][1])
-
     velocity = torch.hstack(velocity)
     stable_flag = torch.hstack(stable_flag)
 
+    # print time and acc
     if torch.cuda.is_available():
         torch.cuda.synchronize()
-    sim_time = perf_counter() - timer
+    avg_sim_time = (perf_counter() - timer) / n_state
+    avg_success_rate = torch.sum(stable_flag).item() / n_state
 
-    print("time ", sim_time / stable_flag.shape[0])
-    return velocity, stable_flag
+    print("acc", avg_success_rate)
+    print("time", avg_sim_time)
+
+    return velocity, stable_flag, avg_sim_time, avg_success_rate
 
 if __name__ == '__main__':
     from learn2assemble import ASSEMBLY_RESOURCE_DIR, default_settings, RESOURCE_DIR
@@ -177,5 +174,4 @@ if __name__ == '__main__':
     gpus = np.arange(torch.cuda.device_count())
     devices = [f"cuda:{gpu_id}" for gpu_id in gpus]
 
-    v_fp32, stable_fp32 = ipm_simulate_parallel(part_states, ipm_settings_cpu, devices, 2048)
-    print(torch.sum(stable_fp32).item() / stable_fp32.shape[0])
+    v_fp32, stable_fp32, avg_sim_time, avg_success_rate = ipm_simulate_parallel(part_states, ipm_settings_cpu, devices, 512)
