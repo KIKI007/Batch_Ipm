@@ -124,6 +124,7 @@ def test_instance(sol_file, part_states, ipm_settings_cpu):
             cur_acc = torch.sum(stable_fp32).item() / stable_fp32.shape[0]
             progress.set_postfix_str(f"{cur_acc:.3f}")
             progress.update()
+
     print("\n")
     torch.cuda.synchronize()
     print("time:\t", (perf_counter() - start_timer) / n_batch)

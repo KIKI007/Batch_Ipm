@@ -519,8 +519,10 @@ def ipm_simulate(batch_part_states: list[dict], ipm_settings):
     device = ipm.device
 
     # precondition
+    reset_timer('precondition')
     if "GG" not in ipm_settings:
         ipm_precondition(ipm_settings)
+    end_timer('precondition')
 
     # update dynamic attributes
     reset_timer('dynamic_attrib')
