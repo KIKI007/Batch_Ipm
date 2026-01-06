@@ -52,7 +52,6 @@ def load_assembly(in_, out_, return_dict):
     ipm_settings_default['ipm'] = {
         "n_iter": 30,
         "n_pcg_eval_iter": 10,
-        "n_pcg_iter": 200,
         "n_linesearch": 32,
         "kkt_conv_eps": 1E-4,
         "x_bound_tol": 1E-5,
@@ -128,6 +127,8 @@ def test_instance(sol_file, part_states, ipm_settings_cpu):
     avg_sim_time = (perf_counter() - start_timer) / n_batch
     avg_success_rate = tot_success / n_state
     print("name:\t", sol_file)
+    print("num pcg iter = ", ipm_settings["n_pcg_iter"])
+    print("num of parts = ", ipm_settings["n_part"])
     print("num of states:", n_state)
     print("time:\t", avg_sim_time)
     print("success rate:\t", avg_success_rate)
@@ -199,7 +200,7 @@ def parallel_load_assembly(sol_files, n_worker = 64):
 if __name__ == "__main__":
     import warnings
     warnings.filterwarnings("ignore")
-    
+
     os.environ['MKL_THREADING_LAYER'] = 'GNU'
     os.environ['MKL_SERVICE_FORCE_INTEL'] = '1'
     try:

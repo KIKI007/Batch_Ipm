@@ -258,7 +258,7 @@ def ipm_init(parts: list[Trimesh],
     # auto parameters
     settings["ipm"]["Ccp"] = 1.2 * abs(torch.sum(settings['ipm']['g']).item())
     if "n_pcg_iter" not in settings["ipm"]:
-        settings["ipm"]["n_pcg_iter"] = max(int(100), int((settings["ipm"]["Q"].shape[0] * 0.03) // 10 * 10))
+        settings["ipm"]["n_pcg_iter"] = max(int(200), int((settings["ipm"]["Q"].shape[0] * 0.05) // 10 * 10))
     print("density = ", settings["ipm"]["density"])
     print("Ccp = ", settings["ipm"]["Ccp"])
     print("num pcg iter = ", settings["ipm"]["n_pcg_iter"])
