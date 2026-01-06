@@ -99,7 +99,6 @@ def test_instance(sol_file, part_states, ipm_settings_cpu):
     n_batch = 2048
 
     n_state = part_states.shape[0]
-    print("num of states:", n_state)
 
     dataloader = DataLoader(
         TensorDataset(part_states),
@@ -129,9 +128,9 @@ def test_instance(sol_file, part_states, ipm_settings_cpu):
     avg_sim_time = (perf_counter() - start_timer) / n_batch
     avg_success_rate = tot_success / n_state
     print("name:\t", sol_file)
+    print("num of states:", n_state)
     print("time:\t", avg_sim_time)
     print("success rate:\t", avg_success_rate)
-    print("\n")
 
     result_table.append({"name": sol_file,
                          "n_parts": ipm_settings['n_part'],
