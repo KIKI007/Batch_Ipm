@@ -21,9 +21,6 @@ def is_wsl():
     release = platform.release().lower()
     return 'microsoft' in release or 'wsl' in release
 
-if is_wsl():
-    curriculumn_folder = "/mnt/d/curriculum_Thingi10K_12/Thingi10K_12/"
-    assembly_folder = "/mnt/d/assembly_Thingi10K_12/Thingi10K_12/"
 if platform.system() == 'Windows':
     curriculumn_folder = "D:/curriculum_Thingi10K_12/Thingi10K_12"
     assembly_folder = "D:/assembly_Thingi10K_12/Thingi10K_12"
