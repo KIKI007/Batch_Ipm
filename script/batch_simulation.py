@@ -17,6 +17,8 @@ import platform
 from tqdm import tqdm
 from simulation_preload import parallel_load_assembly, is_wsl, load_states
 
+torch.set_float32_matmul_precision('high')
+
 if platform.system() == 'Windows':
     curriculumn_folder = "D:/curriculum_Thingi10K_12/Thingi10K_12"
     assembly_folder = "D:/assembly_Thingi10K_12/Thingi10K_12"
@@ -84,7 +86,7 @@ if __name__ == "__main__":
     sol_files = [f for f in listdir(curriculumn_folder) if isfile(join(curriculumn_folder, f))]
     sol_files.sort()
     sol_files = sol_files[::-1]
-    sol_files = sol_files[:10]
+    #sol_files = sol_files[:10]
 
     dict_ipm_settings = parallel_load_assembly(sol_files, n_worker=32)
     dict_part_states = load_states(sol_files)

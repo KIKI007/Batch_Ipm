@@ -16,6 +16,9 @@ import sys
 import copy
 import torch.multiprocessing as mp
 
+torch.set_float32_matmul_precision('high')
+
+
 def is_wsl():
     # 'uname -r' equivalent
     release = platform.release().lower()
@@ -119,9 +122,10 @@ def test_instance(sol_file, part_states, ipm_settings_cpu):
             stable_fp32 = stable_fp32[: n_test_sub]
             # evaluation
             tot_success += torch.sum(stable_fp32).item()
-            progress.set_postfix_str(torch.sum(stable_fp32).item() / stable_fp32.shape[0])
+            cur_acc = torch.sum(stable_fp32).item() / stable_fp32.shape[0]
+            progress.set_postfix_str(f"{cur_acc:.3f}")
             progress.update()
-
+    print("\n")
     torch.cuda.synchronize()
     print("time:\t", (perf_counter() - start_timer) / n_batch)
     print("success rate:\t", tot_success / n_state)

@@ -132,9 +132,11 @@ def ipm_simulate_parallel(sim_datas, simulators):
         while num_done < n_step:
             job_id, velocity, stable_flag = out_queue.get()
             return_dict[job_id] = (velocity, stable_flag)
-            progress.set_postfix_str(torch.sum(stable_flag).item() / stable_flag.shape[0])
+            curr_acc = torch.sum(stable_flag).item() / stable_flag.shape[0]
+            progress.set_postfix_str(f"{curr_acc: .3f}")
             progress.update()
             num_done = num_done + 1
+    print("\n")
 
     velocity = []
     stable_flag = []
