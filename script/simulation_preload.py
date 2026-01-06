@@ -1,5 +1,4 @@
 from time import perf_counter
-from pympler import asizeof
 from learn2assemble import default_settings
 from learn2assemble.assembly import load_assembly_from_files, compute_assembly_contacts
 from learn2assemble.simulator import ipm_init, ipm_search_parameters, ipm_simulate, ipm_get_states, print_logger, \
@@ -91,7 +90,7 @@ def test_instance(sol_file, part_states, ipm_settings_cpu):
     learn2assemble.simulator.logger = {
         'timer': {},
         'log': {},
-        'activate': False
+        'activate': True
     }
 
     ipm_settings = ipm_update_device(ipm_settings_cpu, 'cuda')
@@ -140,6 +139,8 @@ def test_instance(sol_file, part_states, ipm_settings_cpu):
 
     with open('result.json', 'w') as f:
         json.dump(result_table, f, indent=4)
+
+    print_logger(1)
 
     return True
 

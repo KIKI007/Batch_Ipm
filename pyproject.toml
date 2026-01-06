@@ -19,7 +19,6 @@ dependencies = [
     "warp-lang",
     "rtree",
     "setuptools",
-    "pympler"
 ]
 
 description = "A package for conducting research using robots for assembly"
