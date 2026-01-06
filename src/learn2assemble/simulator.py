@@ -288,11 +288,14 @@ def ipm_get_states(part_states, boundary_part_ids, n_sample):
         n_sample = int(2 ** np.ceil(np.log2(n_sample)))
         print("change num sample to ", n_sample)
 
-    test_states = ipm_empty_states(part_states.shape[1], boundary_part_ids, n_sample)
-    test_states_sub = part_states[: min(part_states.shape[0], n_sample):, :]
-    n_test_sub = test_states_sub.shape[0]
-    test_states[:n_test_sub, :] = test_states_sub
-    return test_states, n_test_sub
+    if n_sample <= part_states.shape[0]:
+        return part_states[:n_sample, :], n_sample
+    else:
+        test_states = ipm_empty_states(part_states.shape[1], boundary_part_ids, n_sample)
+        test_states_sub = part_states[: min(part_states.shape[0], n_sample):, :]
+        n_test_sub = test_states_sub.shape[0]
+        test_states[:n_test_sub, :] = test_states_sub
+        return test_states, n_test_sub
 
 def ipm_search_parameters(ipm_settings: dict, part_states, nsample = 32, acc_tol=0.9):
     new_states = ipm_sort_states(part_states, ascend=False)
@@ -496,7 +499,10 @@ def ipm_solve_rhs(ipm, s, z, invP, v1, v2, v3, n_iter, dx=None):
         uk = invP * rk
         abs_ = torch.max(dx_rk)
         if abs_ < ipm.kkt_conv_eps / 10:
+            ipm.pcg_count += (k + 1) * ipm.n_pcg_eval_iter
             break
+    else:
+        ipm.pcg_count += m * ipm.n_pcg_eval_iter
 
     ds = v3 - G_(dx, *rbeG)
     dz = (v2 - z * ds) / s
@@ -512,15 +518,17 @@ def ipm_update_device(ipm, device):
     new_ipm["device"] = torch.device(device)
     return new_ipm
 
-def ipm_simulate(batch_part_states: list[dict], ipm_settings):
-    # name space
+def ipm_simulate(batch_part_states: torch.tensor, ipm_settings: dict):
     reset_timer('ipm')
     # precondition
     reset_timer('precondition')
     if "GG" not in ipm_settings:
         ipm_precondition(ipm_settings)
+    if "pcg_count" not in ipm_settings:
+        ipm_settings["pcg_count"] = 0
     end_timer('precondition')
 
+    # namespace
     ipm = SimpleNamespace(**ipm_settings)
     floatType = ipm.float_type
     device = ipm.device
@@ -608,6 +616,7 @@ def ipm_simulate(batch_part_states: list[dict], ipm_settings):
     xclip = torch.clip(result_x, xl, xu)
     velocity, velocity_inf_nrm = ipm_evaluate_result(ipm, xclip, ps)
     end_timer('ipm')
+    ipm_settings["pcg_count"] = ipm.pcg_count
     return velocity, (velocity_inf_nrm < ipm.velocity_tol)
 
 def init_gurobi(parts, contacts, settings: dict):

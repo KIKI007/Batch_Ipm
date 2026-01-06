@@ -16,6 +16,7 @@ import sys
 import copy
 import torch.multiprocessing as mp
 import wandb
+
 torch.set_float32_matmul_precision('high')
 
 
@@ -23,6 +24,7 @@ def is_wsl():
     # 'uname -r' equivalent
     release = platform.release().lower()
     return 'microsoft' in release or 'wsl' in release
+
 
 if platform.system() == 'Windows':
     curriculumn_folder = "D:/curriculum_Thingi10K_12/Thingi10K_12"
@@ -36,12 +38,14 @@ else:
 
 result_table = []
 
+
 def compute_memory(ipm_settings):
     total_memory = 0
     for name, val in ipm_settings.items():
         if torch.is_tensor(val):
             total_memory += val.nelement() * val.element_size()
     return total_memory / 1024.0 / 1024.0
+
 
 def load_assembly(in_, out_, return_dict):
     ipm_settings_default = copy.deepcopy(default_settings)
@@ -82,6 +86,7 @@ def load_assembly(in_, out_, return_dict):
         return_dict[sol_file] = ipm_settings
         out_.put((sol_file, compute_memory(ipm_settings)))
 
+
 def test_instance(sol_file, part_states, ipm_settings_cpu):
     torch.cuda.synchronize()
     start_timer = perf_counter()
@@ -91,60 +96,71 @@ def test_instance(sol_file, part_states, ipm_settings_cpu):
         'log': {},
         'activate': True
     }
-
     ipm_settings = ipm_update_device(ipm_settings_cpu, 'cuda')
 
     # decided batch size
     n_batch = 2048
-
+    n_epochs = part_states.shape[0] // n_batch
+    if part_states.shape[0] % n_batch != 0:
+        n_epochs += 1
     n_state = part_states.shape[0]
 
-    dataloader = DataLoader(
-        TensorDataset(part_states),
-        batch_size=n_batch,  # How many samples per batch
-        shuffle=False,  # Shuffle data every epoch
-        num_workers=2  # Use 2 subprocesses for loading (adjust as needed)
-    )
-
     tot_success = 0
-    with tqdm(total=len(dataloader), position=1) as progress:
-        for part_states in dataloader:
+    ipm_settings['pcg_count'] = 0
+
+    with tqdm(total=n_epochs, position=1) as progress:
+        for id in range(n_epochs):
+            # dataloader
+            if id == n_epochs - 1:
+                test_states = part_states[id * n_batch: , :]
+            else:
+                test_states = part_states[id * n_batch: (id + 1) * n_batch, :]
             # padding
-            part_states = part_states[0]
-            test_states, n_test_sub = ipm_get_states(part_states, ipm_settings['boundary_part_ids'], n_sample=n_batch)
+            test_states, n_test_sub = ipm_get_states(test_states, ipm_settings['boundary_part_ids'], n_sample=n_batch)
             # simulation
             _, stable_fp32 = ipm_simulate(test_states, ipm_settings)
-            stable_fp32 = stable_fp32[: n_test_sub]
             # evaluation
+            stable_fp32 = stable_fp32[:n_test_sub]
             tot_success += torch.sum(stable_fp32).item()
             cur_acc = torch.sum(stable_fp32).item() / stable_fp32.shape[0]
             progress.set_postfix_str(f"{cur_acc:.3f}")
             progress.update()
 
-    print("\n")
-
     torch.cuda.synchronize()
-    avg_sim_time = (perf_counter() - start_timer) / n_batch
+    sim_time = learn2assemble.simulator.logger['log']['ipm']
+    tot_time = (perf_counter() - start_timer)
     avg_success_rate = tot_success / n_state
+    avg_pcg_count = ipm_settings['pcg_count'] / n_epochs / ipm_settings['n_iter']
+
     print("name:\t", sol_file)
-    print("num pcg iter = ", ipm_settings["n_pcg_iter"])
-    print("num of parts = ", ipm_settings["n_part"])
-    print("num of states:", n_state)
-    print("time:\t", avg_sim_time)
-    print("success rate:\t", avg_success_rate)
+    print("max. pcg iter:\t", ipm_settings["n_pcg_iter"] * 1.5)
+    print("real pcg iter:\t", avg_pcg_count)
+    print("num of parts:\t", ipm_settings["n_part"])
+    print("num of states:\t", n_state)
+    print("tot time:\t", tot_time)
+    print("sim time:\t", sim_time)
+    print("avg sim time:\t", sim_time/n_state)
+    print("avg success rate:\t", avg_success_rate)
     print_logger(1)
+    print("\n")
 
     result_table.append({"name": sol_file,
                          "n_parts": ipm_settings['n_part'],
+                         "max_pcg": ipm_settings["n_pcg_iter"],
+                         "avg_pcg": avg_pcg_count,
                          "n_states": n_state,
-                         "time": avg_sim_time,
+                         "tot_time": tot_time,
+                         "sim_time": sim_time,
                          "acc": avg_success_rate}
                         )
 
     # log wandb
-    wandb.log({"n_parts": ipm_settings_cpu['n_part'],
+    wandb.log({"n_parts": ipm_settings['n_part'],
+               "max_pcg": ipm_settings["n_pcg_iter"],
+               "avg_pcg": avg_pcg_count,
                "n_states": n_state,
-               "time": avg_sim_time,
+               "tot_time": tot_time,
+               "sim_time": sim_time,
                "acc": avg_success_rate}
               )
 
@@ -152,6 +168,7 @@ def test_instance(sol_file, part_states, ipm_settings_cpu):
         json.dump(result_table, f, indent=4)
 
     return True
+
 
 def load_states(sol_file):
     dict_part_states = {}
@@ -164,7 +181,8 @@ def load_states(sol_file):
         dict_part_states[sol_file] = part_states
     return dict_part_states
 
-def parallel_load_assembly(sol_files, n_worker = 64):
+
+def parallel_load_assembly(sol_files, n_worker=64):
     manager = mp.Manager()
     dict_ipm_settings = manager.dict()
     in_ = manager.Queue()
@@ -197,8 +215,10 @@ def parallel_load_assembly(sol_files, n_worker = 64):
 
     return dict(dict_ipm_settings)
 
+
 if __name__ == "__main__":
     import warnings
+
     warnings.filterwarnings("ignore")
 
     os.environ['MKL_THREADING_LAYER'] = 'GNU'
@@ -210,14 +230,13 @@ if __name__ == "__main__":
 
     sol_files = [f for f in listdir(curriculumn_folder) if isfile(join(curriculumn_folder, f))]
     sol_files.sort()
-    sol_files = sol_files[::-1][:5]
+    sol_files = sol_files[::-1]
 
     # setup wandb
     wandb.login(key="1c4a274de42ea0326b6ac75651a33f2b7cb2d217", relogin=True, force=True)
     run = wandb.init(project="Simulation", name="batch")
 
-
-    dict_ipm_settings = parallel_load_assembly(sol_files, n_worker=32)
+    dict_ipm_settings = parallel_load_assembly(sol_files, n_worker=8)
     dict_part_states = load_states(sol_files)
 
     with tqdm(total=len(sol_files), position=0) as progress:
