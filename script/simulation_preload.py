@@ -131,6 +131,7 @@ def test_instance(sol_file, part_states, ipm_settings_cpu):
     print("num of states:", n_state)
     print("time:\t", avg_sim_time)
     print("success rate:\t", avg_success_rate)
+    print_logger(1)
 
     result_table.append({"name": sol_file,
                          "n_parts": ipm_settings['n_part'],
@@ -149,7 +150,6 @@ def test_instance(sol_file, part_states, ipm_settings_cpu):
     with open('result.json', 'w') as f:
         json.dump(result_table, f, indent=4)
 
-    print_logger(1)
     return True
 
 def load_states(sol_file):
