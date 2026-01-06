@@ -206,7 +206,7 @@ if __name__ == "__main__":
 
     sol_files = [f for f in listdir(curriculumn_folder) if isfile(join(curriculumn_folder, f))]
     sol_files.sort()
-    sol_files = sol_files[::-1]
+    sol_files = sol_files[::-1][:5]
 
     # setup wandb
     wandb.login(key="1c4a274de42ea0326b6ac75651a33f2b7cb2d217", relogin=True, force=True)
