@@ -17,12 +17,16 @@ import platform
 from tqdm import tqdm
 from simulation_preload import parallel_load_assembly, is_wsl, load_states
 
-if is_wsl():
+if platform.system() == 'Windows':
+    curriculumn_folder = "D:/curriculum_Thingi10K_12/Thingi10K_12"
+    assembly_folder = "D:/assembly_Thingi10K_12/Thingi10K_12"
+elif is_wsl():
     curriculumn_folder = "/mnt/d/curriculum_Thingi10K_12/Thingi10K_12/"
     assembly_folder = "/mnt/d/assembly_Thingi10K_12/Thingi10K_12/"
 else:
     curriculumn_folder = "/scratch/assembly/curriculum/"
     assembly_folder = "/scratch/assembly/Thingi10K_12/"
+
 result_table = []
 
 def test_instance(sol_file, part_states, ipm_settings_cpu):
