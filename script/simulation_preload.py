@@ -96,9 +96,7 @@ def test_instance(sol_file, part_states, ipm_settings_cpu):
     ipm_settings = ipm_update_device(ipm_settings_cpu, 'cuda')
 
     # decided batch size
-    n_batch = 1024
-    if ipm_settings_cpu['n_part'] > 80:
-        n_batch = 512
+    n_batch = 2048
 
     n_state = part_states.shape[0]
     print("num of states:", n_state)
@@ -204,14 +202,9 @@ if __name__ == "__main__":
     sol_files = sol_files[::-1]
     sol_files = sol_files[:10]
 
-    # skip
-    # for id in range(len(sol_files)):
-    #     sol_file = sol_files[id]
-    #     obj_id = sol_file.split('_')[2]
-    #     sol_id = sol_file.split('_')[4].split('.')[0]
-    #     if obj_id == "2426":
-    #         sol_files = sol_files[id:-1]
-    #         break
+    # setup wandb
+    wandb.login(key="1c4a274de42ea0326b6ac75651a33f2b7cb2d217", relogin=True, force=True)
+    run = wandb.init(project="Simulation", name="batch")
 
 
     dict_ipm_settings = parallel_load_assembly(sol_files, n_worker=32)
