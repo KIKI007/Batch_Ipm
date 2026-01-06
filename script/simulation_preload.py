@@ -52,7 +52,7 @@ def load_assembly(in_, out_, return_dict):
     ipm_settings_default['ipm'] = {
         "n_iter": 30,
         "n_pcg_eval_iter": 10,
-        "n_pcg_iter": 300,
+        "n_pcg_iter": 200,
         "n_linesearch": 32,
         "kkt_conv_eps": 1E-4,
         "x_bound_tol": 1E-5,
@@ -124,23 +124,33 @@ def test_instance(sol_file, part_states, ipm_settings_cpu):
             progress.update()
 
     print("\n")
+
     torch.cuda.synchronize()
-    print("time:\t", (perf_counter() - start_timer) / n_batch)
-    print("success rate:\t", tot_success / n_state)
+    avg_sim_time = (perf_counter() - start_timer) / n_batch
+    avg_success_rate = tot_success / n_state
+    print("name:\t", sol_file)
+    print("time:\t", avg_sim_time)
+    print("success rate:\t", avg_success_rate)
     print("\n")
 
     result_table.append({"name": sol_file,
                          "n_parts": ipm_settings['n_part'],
                          "n_states": n_state,
-                         "time": (perf_counter() - start_timer) / n_batch,
-                         "acc": tot_success / n_state}
+                         "time": avg_sim_time,
+                         "acc": avg_success_rate}
                         )
+
+    # log wandb
+    wandb.log({"n_parts": ipm_settings_cpu['n_part'],
+               "n_states": n_state,
+               "time": avg_sim_time,
+               "acc": avg_success_rate}
+              )
 
     with open('result.json', 'w') as f:
         json.dump(result_table, f, indent=4)
 
     print_logger(1)
-
     return True
 
 def load_states(sol_file):
@@ -187,8 +197,6 @@ def parallel_load_assembly(sol_files, n_worker = 64):
 
     return dict(dict_ipm_settings)
 
-
-
 if __name__ == "__main__":
     os.environ['MKL_THREADING_LAYER'] = 'GNU'
     os.environ['MKL_SERVICE_FORCE_INTEL'] = '1'
@@ -200,7 +208,6 @@ if __name__ == "__main__":
     sol_files = [f for f in listdir(curriculumn_folder) if isfile(join(curriculumn_folder, f))]
     sol_files.sort()
     sol_files = sol_files[::-1]
-    sol_files = sol_files[:10]
 
     # setup wandb
     wandb.login(key="1c4a274de42ea0326b6ac75651a33f2b7cb2d217", relogin=True, force=True)
