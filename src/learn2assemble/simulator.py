@@ -514,15 +514,15 @@ def ipm_update_device(ipm, device):
 def ipm_simulate(batch_part_states: list[dict], ipm_settings):
     # name space
     reset_timer('ipm')
-    ipm = SimpleNamespace(**ipm_settings)
-    floatType = ipm.float_type
-    device = ipm.device
-
     # precondition
     reset_timer('precondition')
     if "GG" not in ipm_settings:
         ipm_precondition(ipm_settings)
     end_timer('precondition')
+
+    ipm = SimpleNamespace(**ipm_settings)
+    floatType = ipm.float_type
+    device = ipm.device
 
     # update dynamic attributes
     reset_timer('dynamic_attrib')
