@@ -197,6 +197,9 @@ def parallel_load_assembly(sol_files, n_worker = 64):
     return dict(dict_ipm_settings)
 
 if __name__ == "__main__":
+    import warnings
+    warnings.filterwarnings("ignore")
+    
     os.environ['MKL_THREADING_LAYER'] = 'GNU'
     os.environ['MKL_SERVICE_FORCE_INTEL'] = '1'
     try:
