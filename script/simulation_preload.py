@@ -94,7 +94,6 @@ def test_instance(sol_file, part_states, ipm_settings_cpu):
     }
 
     ipm_settings = ipm_update_device(ipm_settings_cpu, 'cuda')
-    ipm_precondition(ipm_settings)
 
     # decided batch size
     n_batch = 1024

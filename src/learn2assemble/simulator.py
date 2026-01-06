@@ -518,6 +518,10 @@ def ipm_simulate(batch_part_states: list[dict], ipm_settings):
     floatType = ipm.float_type
     device = ipm.device
 
+    # precondition
+    if "GG" not in ipm_settings:
+        ipm_precondition(ipm_settings)
+
     # update dynamic attributes
     reset_timer('dynamic_attrib')
     q, xl, xu, Al, ps, cs = ipm_get_dynamic_attrib(ipm, batch_part_states)
