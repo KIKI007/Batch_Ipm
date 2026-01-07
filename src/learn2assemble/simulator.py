@@ -697,7 +697,7 @@ def simulate(parts: list[Trimesh],
         if not ipm_computed:
             ipm_init(parts, contacts, settings)
         x, flag = ipm_simulate(batch_part_states, settings["ipm"])
-        return x, flag
+        return x.cpu(), flag.cpu()
 
 if __name__ == '__main__':
     from learn2assemble import ASSEMBLY_RESOURCE_DIR, default_settings, RESOURCE_DIR

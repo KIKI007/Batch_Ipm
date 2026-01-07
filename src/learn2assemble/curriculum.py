@@ -119,7 +119,13 @@ def forward_actions(part_states: np.ndarray,
     prev_inds = prev_inds[unique_indices]
     release_action_flag = release_action_flag[unique_indices]
     install_action_flag = np.logical_not(release_action_flag)
-    return new_states[install_action_flag, :], prev_inds[install_action_flag], new_states[release_action_flag, :], prev_inds[release_action_flag]
+
+    new_install_states = new_states[install_action_flag, :]
+    new_release_states = new_states[release_action_flag, :]
+    prev_install_states = part_states[prev_inds[install_action_flag], :]
+    prev_release_states = part_states[prev_inds[release_action_flag], :]
+
+    return new_install_states, prev_install_states, new_release_states, prev_release_states
 
 
 def check_terminate(part_states: np.ndarray,
@@ -130,17 +136,17 @@ def check_terminate(part_states: np.ndarray,
     dist = np.sum(np.abs(part_states - fixed_states[None, :]), axis=1)
     return dist == 0
 
-def compute_solution(records):
-    nstep = len(records['part_states'])
-    ind = 0
-    part_states = []
-    for istep in np.arange(start=nstep - 1, stop=-1, step=-1):
-        state = records["part_states"][istep][ind, :]
-        part_states.append(state)
-        if istep > 0:
-            ind = records["prev_inds"][istep][ind]
-    part_states.reverse()
-    return np.array(part_states, dtype=np.int32)
+def compute_solution(part_state, solution_dict):
+    part_state_encode = tuple(part_state.tolist())
+    solution = [part_state]
+    while part_state_encode in solution_dict:
+        if len(solution_dict[part_state_encode]) > 0:
+            part_state_encode = solution_dict[part_state_encode][0]
+            solution.append(np.array(part_state_encode))
+        else:
+            break
+    solution.reverse()
+    return np.array(solution, dtype=np.int32)
 
 
 def compute_policy_labels(current_states, prev_states):
@@ -170,6 +176,23 @@ def compute_policy_labels(current_states, prev_states):
         policy_labels[:, n_part + part_id] = np.logical_and(flag, current_states[:, part_id] == 2)
 
     return policy_labels
+
+def add_to_map(states, prev_states, solution_dict):
+    for id, state in enumerate(states):
+        state_encode = tuple(state.tolist())
+        prev_state_encode = tuple(prev_states[id].tolist())
+        if state_encode not in solution_dict:
+            solution_dict[state_encode] = [prev_state_encode]
+        else:
+            solution_dict[state_encode].append(prev_state_encode)
+
+def array_stack(array0, array1):
+    if array0.shape[0] == 0:
+        return array1
+    elif array1.shape[0] == 0:
+        return array0
+    else:
+        return np.vstack([array0, array1])
 
 def forward_curriculum(parts: list[Trimesh],
                        contacts: list[dict],
@@ -205,83 +228,97 @@ def forward_curriculum(parts: list[Trimesh],
         "output": []
     }
 
-    states_to_explore = part_states
-    states_to_simulate = None
+    states_to_explore = np.zeros((0, len(parts)), dtype=np.int32)
+    prev_states_to_explore = np.zeros((0, len(parts)), dtype=np.int32)
+    states_to_simulate = np.zeros((0, len(parts)), dtype=np.int32)
+    prev_states_to_simulate = np.zeros((0, len(parts)), dtype=np.int32)
+    solution_dict = {}
 
-    while (part_states.shape[0] > 0 and not check_terminate(part_states, boundary_part_ids).any()):
+    while (part_states.shape[0] > 0):
         iter += 1
-
-        install_states, install_prev_inds, release_states, release_prev_inds = forward_actions(part_states, n_robot, boundary_part_ids)
-
-        new_states = []
-        prev_inds = []
-
-        if release_states.shape[0] > 0:
-            timer = time.perf_counter()
-            n_sim = release_states.shape[0]
-            stability_flag = np.zeros(n_sim, dtype=bool)
-            batch_ind = 0
-            while batch_ind < n_sim:
-                inds = np.arange(batch_ind, min(n_sim, batch_ind + n_sim_batch))
-                test_states = torch.tensor(release_states[inds, :])
-                test_states, n_test = ipm_get_states(test_states, boundary_part_ids, n_sim_batch)
-                _, flag = simulate(parts, contacts, test_states, settings)
-                stability_flag[inds] = flag[:n_test].cpu().numpy()
-                batch_ind += n_sim_batch
-
-            if verbose:
-                print("step:\t", iter,
-                      ",\t sim:\t", f"{np.sum(stability_flag)}/{n_sim}",
-                      ",\t time:\t", round((time.perf_counter() - timer) / n_sim, 4))
-
-            if stability_flag.sum() > 0:
-                new_states = [release_states[stability_flag, :]]
-                prev_inds = [release_prev_inds[stability_flag]]
-
+        install_states, prev_install_states, release_states, prev_release_states = forward_actions(part_states, n_robot, boundary_part_ids)
+        states_to_simulate = array_stack(states_to_simulate, release_states)
+        prev_states_to_simulate = array_stack(prev_states_to_simulate, prev_release_states)
         if install_states.shape[0] > 0:
             # check insertion
             if table_insertion is not None:
                 insertability = check_future_insertability(install_states, table_insertion)
                 install_states = install_states[insertability, :]
-                install_prev_inds = install_prev_inds[insertability]
+                prev_install_states = prev_install_states[insertability, :]
 
             # check grasp
-            if install_prev_inds.shape[0] > 0 and table_grasp is not None:
+            if prev_install_states.shape[0] > 0 and table_grasp is not None:
                 graspability_flag = check_future_graspability(install_states, boundary_part_ids, table_grasp)
                 install_states = install_states[graspability_flag, :]
-                install_prev_inds = install_prev_inds[graspability_flag]
+                prev_install_states = prev_install_states[graspability_flag]
 
-            if install_prev_inds.shape[0] > 0:
-                new_states.append(install_states)
-                prev_inds.append(install_prev_inds)
+            if prev_install_states.shape[0] > 0:
+                states_to_explore = array_stack(states_to_explore, install_states)
+                prev_states_to_explore = array_stack(prev_states_to_explore, prev_install_states)
 
-        if len(new_states) > 0:
-            new_states = np.vstack(new_states)
-            prev_inds = np.hstack(prev_inds)
+        while states_to_simulate.shape[0] >= n_sim_batch or (states_to_simulate.shape[0] > 0 and states_to_explore.shape[0] == 0):
+            timer = time.perf_counter()
+            if n_sim_batch < states_to_simulate.shape[0]:
+                test_states = torch.tensor(states_to_simulate[:n_sim_batch, :], dtype=torch.long, device='cpu')
+                n_test = n_sim_batch
+            else:
+                test_states = torch.tensor(states_to_simulate, dtype=torch.long, device='cpu')
+                test_states, n_test = ipm_get_states(test_states, boundary_part_ids, n_sim_batch)
+            _, flag = simulate(parts, contacts, test_states, settings)
+            flag = flag[:n_test].numpy().astype(bool)
+            test_states = test_states[:n_test, :].numpy()
+            test_prev_states = prev_states_to_simulate[:n_test, :]
+            if verbose:
+                print("step:\t", iter,
+                      ",\t sim:\t", f"{np.sum(flag)}/{n_test}",
+                      ",\t time:\t", round((time.perf_counter() - timer) / n_test, 4))
 
-            # add into dataset
-            policy_dataset['input'].append(np.copy(new_states))
-            policy_dataset['output'].append(compute_policy_labels(new_states, part_states))
+            states_to_explore = array_stack(states_to_explore, test_states[flag, :])
+            prev_states_to_explore = array_stack(prev_states_to_explore, test_prev_states[flag, :])
 
-            new_states, prev_inds = cluster(new_states, prev_inds, n_beam)
-            records["part_states"].append(new_states.copy())
-            records["prev_inds"].append(prev_inds.copy())
-            curriculum.append(new_states)
+            states_to_simulate = states_to_simulate[n_test:, :]
+            prev_states_to_simulate = prev_states_to_simulate[n_test:]
 
+        if states_to_explore.shape[0] > 0:
+            # remove states
+            num_parts = np.sum(states_to_explore >= 1, axis = 1)
+            max_part = np.max(num_parts)
+            flag = np.ones(states_to_explore.shape[0], dtype=bool)
+            flag[num_parts < max_part] = False
+            states_to_explore = states_to_explore[flag, :]
+            prev_states_to_explore = prev_states_to_explore[flag, :]
+
+            # sample states
+            n_sample = min(n_beam, states_to_explore.shape[0])
+            weights = num_parts[flag]
+            weights = weights / np.sum(weights)
+            sampled_inds = np.random.choice(
+                np.arange(states_to_explore.shape[0]),
+                size=n_sample,
+                replace=False,  # Key parameter to ensure no duplicates
+                p=weights
+            )
+            part_states = states_to_explore[sampled_inds, :]
+            prev_part_states = prev_states_to_explore[sampled_inds, :]
+            add_to_map(part_states, prev_part_states, solution_dict)
+            curriculum.append(part_states)
+            if check_terminate(part_states, boundary_part_ids).any():
+                break
+
+            # update states
+            flag = np.ones(states_to_explore.shape[0], dtype=bool)
+            flag[sampled_inds] = False
+            states_to_explore = states_to_explore[flag, :]
+            prev_states_to_explore = prev_states_to_explore[flag, :]
         else:
-            return False, compute_solution(records), np.vstack(curriculum), policy_dataset
-
-        part_states = new_states.copy()
-
-    flag = check_terminate(part_states, boundary_part_ids)
-    records["part_states"][-1] = records["part_states"][-1][flag, :]
-    records["prev_inds"][-1] = records["prev_inds"][-1][flag]
+            curriculum = np.vstack(curriculum)
+            return False, compute_solution(curriculum[-1, :], solution_dict), curriculum
 
     # append complete state to the end
     complete_state = np.ones(len(parts), dtype=np.int32)
     complete_state[boundary_part_ids] = 2
     curriculum.append(complete_state)
-    return True, compute_solution(records), np.vstack(curriculum), policy_dataset
+    return True, compute_solution(complete_state, solution_dict), np.vstack(curriculum)
 
 
 if __name__ == '__main__':
@@ -295,22 +332,15 @@ if __name__ == '__main__':
     default_settings['curriculum']['verbose'] = True
     default_settings['rbe']['velocity_tol'] = 1E-2
     default_settings['rbe']['mu'] = 0.2
+    #default_settings['gurobi'] = {}
     default_settings["assembly"]["contact_shrink_ratio"] = 0.1 # for robustnessly computing the contact surfaces
-    default_settings['curriculum']['n_beam'] = 64
+    default_settings['curriculum']['n_beam'] = 128
 
     contacts = compute_assembly_contacts(parts, default_settings)
     #table_insertion, drts = compute_insertion_table(parts, default_settings)
     #table_grasp, grasp_frames, _ = compute_grasp_table(parts, default_settings)
-    succeed, solution, curriculum, policy_dataset = forward_curriculum(parts, contacts, None, None, default_settings)
+    succeed, solution, curriculum = forward_curriculum(parts, contacts, None, None, default_settings)
     print("succeed:\t", succeed)
-
-    filename = os.path.join(RESOURCE_DIR, "curriculum/dome_back2.pol")
-
-    input = np.vstack(policy_dataset['input'])
-    policy_dataset['input'] = torch.tensor(input, dtype=torch.int32, device="cpu")
-    output = np.vstack(policy_dataset['output'])
-    policy_dataset['output'] = torch.tensor(output, dtype=torch.int32, device="cpu")
-    torch.save(policy_dataset, filename)
 
     init_polyscope()
     render_sequence(parts, solution, default_settings)
