@@ -259,13 +259,13 @@ def ipm_init(parts: list[Trimesh],
     settings["ipm"]["Ccp"] = 1.2 * abs(torch.sum(settings['ipm']['g']).item())
     if "n_pcg_iter" not in settings["ipm"]:
         nrow = ipm['nf'] + ipm['nλn'] +  ipm['nλt']
-        settings["ipm"]["n_pcg_iter"] = max(int(200), int((nrow * 0.05) // 10 * 10))
+        ipm["n_pcg_iter"] = max(int(200), int((nrow * 0.05) // 10 * 10))
     print("density = ", settings["ipm"]["density"])
     print("Ccp = ", settings["ipm"]["Ccp"])
     print("num pcg iter = ", settings["ipm"]["n_pcg_iter"])
 
-    settings['ipm'] = ipm
     ipm['pre-computed'] = True
+    settings['ipm'] = ipm
     return ipm
 
 def ipm_empty_states(n_part, bounary_part_ids, n_batch):
@@ -708,7 +708,7 @@ if __name__ == '__main__':
     default_settings['rbe']['mu'] = 0.2
     default_settings["assembly"]["contact_shrink_ratio"] = 0.1  # for robustnessly computing the contact surfaces
 
-    n_batch = 2048
+    n_batch = 1024
     torch.manual_seed(0)
     name = "tetris-999"
     reset_timer("load_assembly")
@@ -732,7 +732,7 @@ if __name__ == '__main__':
 
     # default_settings['gurobi'] = {}
     default_settings['ipm'] = {
-        "n_iter": 25,
+        "n_iter": 30,
         "n_pcg_iter": 200,
         "n_pcg_eval_iter": 10,
         "x_bound_tol": 1E-5,
@@ -746,6 +746,8 @@ if __name__ == '__main__':
 
     reset_timer('init ipm')
     ipm_settings = ipm_init(parts, contacts, default_settings)
+    v_fp32, stable_fp32 = ipm_simulate(part_states, ipm_settings)
+    v_fp32, stable_fp32 = simulate(parts, contacts, part_states, {"gurobi": {}})
     end_timer('init ipm')
 
     gpus = np.arange(torch.cuda.device_count())
@@ -760,7 +762,7 @@ if __name__ == '__main__':
         torch.cuda.synchronize()
     sim_time = perf_counter() - timer
 
-    print("time ", sim_time / stable_fp32.shape[0])
+    print("time ", sim_time)
     print(torch.sum(stable_fp32).item() / stable_fp32.shape[0])
     print_logger(1)
 

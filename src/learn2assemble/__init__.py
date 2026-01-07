@@ -67,14 +67,11 @@ default_settings = settings = {
     },
     'ipm':{
         "n_iter": 30,
-        "n_pcg_iter_1": 50,
-        "n_pcg_iter_2": 50,
         "n_pcg_eval_iter": 10,
         "n_linesearch": 32,
-        "kkt_conv_eps": 1E-5,
-        "x_bound_tol": 1E-6,
+        "kkt_conv_eps": 1E-4,
+        "x_bound_tol": 1E-5,
         "float_type": torch.float32,
-        "use_Q_fast": True,
     },
     "curriculum": {
         "n_beam": 64,
