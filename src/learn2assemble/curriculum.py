@@ -177,14 +177,11 @@ def compute_policy_labels(current_states, prev_states):
 
     return policy_labels
 
-def add_to_map(states, prev_states, solution_dict):
-    for id, state in enumerate(states):
-        state_encode = tuple(state.tolist())
-        prev_state_encode = tuple(prev_states[id].tolist())
-        if state_encode not in solution_dict:
-            solution_dict[state_encode] = [prev_state_encode]
-        else:
-            solution_dict[state_encode].append(prev_state_encode)
+def list_vstack(array_list, n_part):
+    if len(array_list) == 0:
+        return np.zeros((0, n_part))
+    else:
+        return np.vstack(array_list)
 
 def array_stack(array0, array1):
     if array0.shape[0] == 0:
@@ -193,6 +190,20 @@ def array_stack(array0, array1):
         return array0
     else:
         return np.vstack([array0, array1])
+
+def add_solution(curr_states, prev_states, solution_dict, n_part):
+    new_curr_states = []
+    new_prev_states = []
+    for id in range(curr_states.shape[0]):
+        curr_state_encode = tuple(curr_states[id].tolist())
+        prev_state_encode = tuple(prev_states[id].tolist())
+        if curr_state_encode not in solution_dict:
+            solution_dict[curr_state_encode] = [prev_state_encode]
+            new_curr_states.append(curr_states[id])
+            new_prev_states.append(prev_states[id])
+        else:
+            solution_dict[curr_state_encode].append(prev_state_encode)
+    return list_vstack(new_curr_states, n_part), list_vstack(new_prev_states, n_part)
 
 def forward_curriculum(parts: list[Trimesh],
                        contacts: list[dict],
@@ -205,15 +216,19 @@ def forward_curriculum(parts: list[Trimesh],
     boundary_part_ids = env.get("boundary_part_ids", [])
     n_robot = env.get("n_robot", 2)
 
-    curriculum_settings = update_default_settings(settings, "curriculum", {"n_beam": 64, "verbose": False, "n_sim_batch": 2048})
+    curriculum_settings = update_default_settings(settings, "curriculum", {
+                                                                           "n_beam": 64,
+                                                                           "buffer_size": 1E6,
+                                                                           "verbose": False,
+                                                                           "n_sim_batch": 1024})
 
     n_beam = curriculum_settings["n_beam"]
     verbose = curriculum_settings["verbose"]
     n_sim_batch =  curriculum_settings["n_sim_batch"]
-
+    buffer_size = curriculum_settings["buffer_size"]
     # init states
-    part_states = np.zeros((1, len(parts)), dtype=np.int32)
-    part_states[:, boundary_part_ids] = 2
+    states_to_expand = np.zeros((1, len(parts)), dtype=np.int32)
+    states_to_expand[:, boundary_part_ids] = 2
     iter = -1
 
     # beam search
@@ -227,18 +242,21 @@ def forward_curriculum(parts: list[Trimesh],
         "input":  [],
         "output": []
     }
-
-    states_to_explore = np.zeros((0, len(parts)), dtype=np.int32)
-    prev_states_to_explore = np.zeros((0, len(parts)), dtype=np.int32)
-    states_to_simulate = np.zeros((0, len(parts)), dtype=np.int32)
-    prev_states_to_simulate = np.zeros((0, len(parts)), dtype=np.int32)
+    n_part = len(parts)
+    states_stack = np.zeros((0, n_part), dtype=np.int32)
+    prev_states_stack = np.zeros((0, n_part), dtype=np.int32)
+    states_to_simulate = np.zeros((0, n_part), dtype=np.int32)
+    prev_states_to_simulate = np.zeros((0, n_part), dtype=np.int32)
     solution_dict = {}
-    max_part = 1
-    while (part_states.shape[0] > 0):
+
+    while (states_to_expand.shape[0] > 0):
         iter += 1
-        install_states, prev_install_states, release_states, prev_release_states = forward_actions(part_states, n_robot, boundary_part_ids)
+        install_states, prev_install_states, release_states, prev_release_states = forward_actions(states_to_expand, n_robot, boundary_part_ids)
         states_to_simulate = array_stack(states_to_simulate, release_states)
         prev_states_to_simulate = array_stack(prev_states_to_simulate, prev_release_states)
+
+        new_states = np.zeros((0, n_part), dtype=np.int32)
+        prev_new_states = np.zeros((0, n_part), dtype=np.int32)
         if install_states.shape[0] > 0:
             # check insertion
             if table_insertion is not None:
@@ -253,10 +271,10 @@ def forward_curriculum(parts: list[Trimesh],
                 prev_install_states = prev_install_states[graspability_flag]
 
             if prev_install_states.shape[0] > 0:
-                states_to_explore = array_stack(states_to_explore, install_states)
-                prev_states_to_explore = array_stack(prev_states_to_explore, prev_install_states)
+                new_states = array_stack(new_states, install_states)
+                prev_new_states = array_stack(prev_new_states, prev_install_states)
 
-        while states_to_simulate.shape[0] >= n_sim_batch or (states_to_simulate.shape[0] > 0 and states_to_explore.shape[0] == 0):
+        while states_to_simulate.shape[0] >= n_sim_batch or (states_to_simulate.shape[0] > 0 and states_stack.shape[0] == 0):
             timer = time.perf_counter()
             if n_sim_batch < states_to_simulate.shape[0]:
                 test_states = torch.tensor(states_to_simulate[:n_sim_batch, :], dtype=torch.long, device='cpu')
@@ -269,57 +287,61 @@ def forward_curriculum(parts: list[Trimesh],
             test_states = test_states[:n_test, :].numpy()
             test_prev_states = prev_states_to_simulate[:n_test, :]
             if verbose:
+                max_part = np.max(np.sum(test_states, axis=1))
                 print("max_part:\t", max_part,
                       ",\t sim:\t", f"{np.sum(flag)}/{n_test}",
                       ",\t time:\t", round((time.perf_counter() - timer) / n_test, 4))
 
-            states_to_explore = array_stack(states_to_explore, test_states[flag, :])
-            prev_states_to_explore = array_stack(prev_states_to_explore, test_prev_states[flag, :])
+            new_states = array_stack(new_states, test_states[flag, :])
+            prev_new_states = array_stack(prev_new_states, test_prev_states[flag, :])
 
             states_to_simulate = states_to_simulate[n_test:, :]
             prev_states_to_simulate = prev_states_to_simulate[n_test:]
 
-        if states_to_explore.shape[0] > 0:
-            # remove states
-            num_parts = np.sum(states_to_explore >= 1, axis = 1)
-            max_part = np.max(num_parts)
-            flag = np.ones(states_to_explore.shape[0], dtype=bool)
-            flag[num_parts + 2 < max_part] = False
-            states_to_explore = states_to_explore[flag, :]
-            prev_states_to_explore = prev_states_to_explore[flag, :]
+        new_states, prev_new_states = add_solution(new_states, prev_new_states, solution_dict, n_part)
+        if check_terminate(new_states, boundary_part_ids).any():
+            break
 
-            # sample states
-            n_sample = min(n_beam, states_to_explore.shape[0])
-            weights = num_parts[flag]
+        states_stack = array_stack(states_stack, new_states)
+        prev_states_stack = array_stack(prev_states_stack, prev_new_states)
+        if states_stack.shape[0] > 0:
+            # remove states
+            if states_stack.shape[0] > buffer_size:
+                states_stack = states_stack[-buffer_size:, :]
+                prev_states_stack = prev_states_stack[-buffer_size:, :]
+
+            # only sample states with the max number of parts
+            num_parts = np.sum(states_stack >= 1, axis = 1)
+            max_part = np.max(num_parts)
+            weights = np.ones(states_stack.shape[0], dtype=np.float32)
+            weights[num_parts < max_part] = 0.0
+            num_state = int(np.sum(weights))
             weights = weights / np.sum(weights)
-            sampled_inds = np.random.choice(
-                np.arange(states_to_explore.shape[0]),
-                size=n_sample,
+            sample_inds = np.random.choice(
+                np.arange(states_stack.shape[0]),
+                size=min(n_beam, num_state),
                 replace=False,  # Key parameter to ensure no duplicates
                 p=weights
             )
-            part_states = states_to_explore[sampled_inds, :]
-            prev_part_states = prev_states_to_explore[sampled_inds, :]
-            add_to_map(part_states, prev_part_states, solution_dict)
-            curriculum.append(part_states)
-            if check_terminate(part_states, boundary_part_ids).any():
-                break
+            states_to_expand = states_stack[sample_inds, :]
+            if verbose:
+                max_part = np.max(np.sum(states_stack, axis=1))
+                print("max_part:\t", max_part,
+                      ",\t num stack:\t", f"{states_stack.shape[0]}")
 
-            # update states
-            flag = np.ones(states_to_explore.shape[0], dtype=bool)
-            flag[sampled_inds] = False
-            states_to_explore = states_to_explore[flag, :]
-            prev_states_to_explore = prev_states_to_explore[flag, :]
+            # remove sample from queue
+            flag = np.ones(states_stack.shape[0], dtype=bool)
+            flag[sample_inds] = False
+            states_stack = states_stack[flag, :]
+            prev_states_stack = prev_states_stack[flag, :]
         else:
-            curriculum = np.vstack(curriculum)
-            return False, compute_solution(curriculum[-1, :], solution_dict), curriculum
-
+            return False, None
+    else:
+        return False, None
     # append complete state to the end
     complete_state = np.ones(len(parts), dtype=np.int32)
     complete_state[boundary_part_ids] = 2
-    curriculum.append(complete_state)
-    return True, compute_solution(complete_state, solution_dict), np.vstack(curriculum)
-
+    return True, compute_solution(complete_state, solution_dict)
 
 if __name__ == '__main__':
     from learn2assemble import ASSEMBLY_RESOURCE_DIR, update_default_settings, default_settings, RESOURCE_DIR
@@ -328,22 +350,24 @@ if __name__ == '__main__':
     import polyscope as ps
     import polyscope.imgui as psim
 
-    parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + "/tetris-1")
+    parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + "/tetris-999")
     default_settings['curriculum']['verbose'] = True
     default_settings['rbe']['velocity_tol'] = 1E-2
     default_settings['rbe']['mu'] = 0.2
     #default_settings['gurobi'] = {}
     default_settings["assembly"]["contact_shrink_ratio"] = 0.1 # for robustnessly computing the contact surfaces
     default_settings['curriculum']['n_beam'] = 64
+    default_settings['curriculum']['n_sim_batch'] = 512
     #default_settings['env']['boundary_part_ids'] = [len(parts) - 1]
     #default_settings['ipm']["n_pcg_iter"] = 200
 
     contacts = compute_assembly_contacts(parts, default_settings)
     #table_insertion, drts = compute_insertion_table(parts, default_settings)
     #table_grasp, grasp_frames, _ = compute_grasp_table(parts, default_settings)
-    succeed, solution, curriculum = forward_curriculum(parts, contacts, None, None, default_settings)
+    succeed, solution = forward_curriculum(parts, contacts, None, None, default_settings)
     print("succeed:\t", succeed)
 
-    init_polyscope()
-    render_sequence(parts, solution, default_settings)
-    ps.show()
+    if solution is not None:
+        init_polyscope()
+        render_sequence(parts, solution, default_settings)
+        ps.show()

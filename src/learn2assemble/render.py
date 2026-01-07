@@ -26,15 +26,19 @@ q = None
 
 def render_sequence(parts: list[Trimesh],
                     sequence: np.ndarray,
-                    settings: dict):
+                    settings: dict,
+                    draw_grasp_n_insertion = False):
     n_part = len(parts)
 
     env = settings.get("env", {})
     boundary_part_ids = env.get("boundary_part_ids", [])
 
-    table_insertion, drts = compute_insertion_table(parts, settings)
-    table_grasp, grasp_frames, scaled_parts = compute_grasp_table(parts, settings)
-    draw_assembly(scaled_parts, sequence[0, :])
+    if draw_grasp_n_insertion:
+        table_insertion, drts = compute_insertion_table(parts, settings)
+        table_grasp, grasp_frames, scaled_parts = compute_grasp_table(parts, settings)
+        draw_assembly(scaled_parts, sequence[0, :])
+    else:
+        draw_assembly(parts, sequence[0, :])
 
     def sequence_callback():
         global step_id, t, q
@@ -46,29 +50,34 @@ def render_sequence(parts: list[Trimesh],
             ps.remove_all_structures()
             ps.remove_all_groups()
 
-            if step_id > 0:
-                prev_state = sequence[step_id - 1, :]
+            if draw_grasp_n_insertion:
+                if step_id > 0:
+                    prev_state = sequence[step_id - 1, :]
+                else:
+                    prev_state = np.zeros(len(parts))
+                    prev_state[boundary_part_ids] = 2
+
+                held_state = (current_state == 2)
+                held_state[boundary_part_ids] = False
+                held_parts = held_state.nonzero()[0]
+
+                for robot_id, part_id in enumerate(held_parts):
+                    frames = compute_grasp_frame(part_id, current_state, table_grasp, grasp_frames)
+                    if frames is not None:
+                        draw_gripper(frames[0, :], 0.05, f"robot {robot_id}")
+
+                draw_assembly(scaled_parts, current_state)
+
+                to_install_part_id = np.logical_and(current_state == 2, prev_state != 2).nonzero()[0]
+                q = None
+                if to_install_part_id.shape[0] > 0:
+                    to_install_part_id = to_install_part_id[0]
+                    part_drts = compute_insertion_drt(to_install_part_id, current_state, table_insertion, drts)
+                    if part_drts is not None:
+                        q = np.zeros(n_part * 6)
+                        q[6 * to_install_part_id: to_install_part_id * 6 + 3] = part_drts[0, :]
             else:
-                prev_state = np.zeros(len(parts))
-                prev_state[boundary_part_ids] = 2
-
-            held_state = (current_state == 2)
-            held_state[boundary_part_ids] = False
-            held_parts = held_state.nonzero()[0]
-            for robot_id, part_id in enumerate(held_parts):
-                frames = compute_grasp_frame(part_id, current_state, table_grasp, grasp_frames)
-                if frames is not None:
-                    draw_gripper(frames[0, :], 0.05, f"robot {robot_id}")
-            draw_assembly(scaled_parts, current_state)
-
-            to_install_part_id = np.logical_and(current_state == 2, prev_state != 2).nonzero()[0]
-            q = None
-            if to_install_part_id.shape[0] > 0:
-                to_install_part_id = to_install_part_id[0]
-                part_drts = compute_insertion_drt(to_install_part_id, current_state, table_insertion, drts)
-                if part_drts is not None:
-                    q = np.zeros(n_part * 6)
-                    q[6 * to_install_part_id: to_install_part_id * 6 + 3] = part_drts[0, :]
+                draw_assembly(parts, current_state)
 
         if q is not None:
             changed, t = psim.SliderFloat("time", v=t, v_min=0, v_max=1)
