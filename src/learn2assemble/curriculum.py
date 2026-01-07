@@ -328,13 +328,15 @@ if __name__ == '__main__':
     import polyscope as ps
     import polyscope.imgui as psim
 
-    parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + "/tetris-1")
+    parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + "/dome")
     default_settings['curriculum']['verbose'] = True
     default_settings['rbe']['velocity_tol'] = 1E-2
-    default_settings['rbe']['mu'] = 0.2
+    default_settings['rbe']['mu'] = 0.5
     #default_settings['gurobi'] = {}
-    default_settings["assembly"]["contact_shrink_ratio"] = 0.1 # for robustnessly computing the contact surfaces
-    default_settings['curriculum']['n_beam'] = 128
+    default_settings["assembly"]["contact_shrink_ratio"] = 0.0 # for robustnessly computing the contact surfaces
+    default_settings['curriculum']['n_beam'] = 64
+    default_settings['env']['boundary_part_ids'] = [len(parts) - 1]
+    default_settings['ipm']["n_pcg_iter"] = 200
 
     contacts = compute_assembly_contacts(parts, default_settings)
     #table_insertion, drts = compute_insertion_table(parts, default_settings)
