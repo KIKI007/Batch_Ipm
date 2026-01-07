@@ -205,7 +205,7 @@ def forward_curriculum(parts: list[Trimesh],
     boundary_part_ids = env.get("boundary_part_ids", [])
     n_robot = env.get("n_robot", 2)
 
-    curriculum_settings = update_default_settings(settings, "curriculum", {"n_beam": 64, "verbose": False, "n_sim_batch": 512})
+    curriculum_settings = update_default_settings(settings, "curriculum", {"n_beam": 64, "verbose": False, "n_sim_batch": 2048})
 
     n_beam = curriculum_settings["n_beam"]
     verbose = curriculum_settings["verbose"]
@@ -233,7 +233,7 @@ def forward_curriculum(parts: list[Trimesh],
     states_to_simulate = np.zeros((0, len(parts)), dtype=np.int32)
     prev_states_to_simulate = np.zeros((0, len(parts)), dtype=np.int32)
     solution_dict = {}
-
+    max_part = 1
     while (part_states.shape[0] > 0):
         iter += 1
         install_states, prev_install_states, release_states, prev_release_states = forward_actions(part_states, n_robot, boundary_part_ids)
@@ -269,7 +269,7 @@ def forward_curriculum(parts: list[Trimesh],
             test_states = test_states[:n_test, :].numpy()
             test_prev_states = prev_states_to_simulate[:n_test, :]
             if verbose:
-                print("step:\t", iter,
+                print("max_part:\t", max_part,
                       ",\t sim:\t", f"{np.sum(flag)}/{n_test}",
                       ",\t time:\t", round((time.perf_counter() - timer) / n_test, 4))
 
@@ -284,7 +284,7 @@ def forward_curriculum(parts: list[Trimesh],
             num_parts = np.sum(states_to_explore >= 1, axis = 1)
             max_part = np.max(num_parts)
             flag = np.ones(states_to_explore.shape[0], dtype=bool)
-            flag[num_parts < max_part] = False
+            flag[num_parts + 2 < max_part] = False
             states_to_explore = states_to_explore[flag, :]
             prev_states_to_explore = prev_states_to_explore[flag, :]
 
@@ -328,15 +328,15 @@ if __name__ == '__main__':
     import polyscope as ps
     import polyscope.imgui as psim
 
-    parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + "/dome")
+    parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + "/tetris-1")
     default_settings['curriculum']['verbose'] = True
     default_settings['rbe']['velocity_tol'] = 1E-2
-    default_settings['rbe']['mu'] = 0.5
+    default_settings['rbe']['mu'] = 0.2
     #default_settings['gurobi'] = {}
-    default_settings["assembly"]["contact_shrink_ratio"] = 0.0 # for robustnessly computing the contact surfaces
+    default_settings["assembly"]["contact_shrink_ratio"] = 0.1 # for robustnessly computing the contact surfaces
     default_settings['curriculum']['n_beam'] = 64
-    default_settings['env']['boundary_part_ids'] = [len(parts) - 1]
-    default_settings['ipm']["n_pcg_iter"] = 200
+    #default_settings['env']['boundary_part_ids'] = [len(parts) - 1]
+    #default_settings['ipm']["n_pcg_iter"] = 200
 
     contacts = compute_assembly_contacts(parts, default_settings)
     #table_insertion, drts = compute_insertion_table(parts, default_settings)
