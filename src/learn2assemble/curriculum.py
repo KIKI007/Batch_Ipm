@@ -447,25 +447,25 @@ if __name__ == '__main__':
     import polyscope as ps
     import polyscope.imgui as psim
 
-    parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + "/tetris-999")
+    parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + "/tetris-1")
     default_settings['curriculum']['verbose'] = True
     default_settings['rbe']['velocity_tol'] = 1E-2
     default_settings['rbe']['mu'] = 0.2
     #default_settings['gurobi'] = {}
     default_settings["assembly"]["contact_shrink_ratio"] = 0.1  # for robustnessly computing the contact surfaces
-    default_settings['curriculum']['n_beam'] = 128
+    default_settings['curriculum']['n_beam'] = 64
     default_settings['curriculum']['n_sim_batch'] = 512
     # default_settings['env']['boundary_part_ids'] = [len(parts) - 1]
     # default_settings['ipm']["n_pcg_iter"] = 200
 
     contacts = compute_assembly_contacts(parts, default_settings)
-    #table_insertion, drts = compute_insertion_table(parts, default_settings)
+    table_insertion, drts = compute_insertion_table(parts, default_settings)
     # table_grasp, grasp_frames, _ = compute_grasp_table(parts, default_settings)
-    succeed, solution_dict = forward_curriculum(parts, contacts, None, None, default_settings)
+    succeed, solution_dict = forward_curriculum(parts, contacts, table_insertion, None, default_settings)
     print(succeed)
     torch.save(solution_dict, ASSEMBLY_RESOURCE_DIR + "/solution.pt")
     solution_dict = torch.load(ASSEMBLY_RESOURCE_DIR + "/solution.pt")
-    labels = backward_actions(solution_dict, 2, None, default_settings['env']['boundary_part_ids'], parts, contacts, default_settings, True)
+    labels = backward_actions(solution_dict, 2, table_insertion, default_settings['env']['boundary_part_ids'], parts, contacts, default_settings, True)
     solution = compute_solution(len(parts), default_settings['env']['boundary_part_ids'], solution_dict)
     if solution is not None:
         init_polyscope()
