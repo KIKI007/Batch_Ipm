@@ -132,9 +132,9 @@ def check_future_insertability(current_states: np.array, table: np.array):
     # print("check insertion time", time.perf_counter() - timer)
     return assemblability_flag
 
-def compute_insertion_masks(current_states: np.array, boundart_part_ids: np.array, table: np.array):
+def compute_insertion_masks(current_states: np.array, boundary_part_ids: np.array, table: np.array):
     held_flag = (current_states == 2)
-    held_flag[:, boundart_part_ids] = False
+    held_flag[:, boundary_part_ids] = False
     insertion_masks = held_flag.copy()
     exist_part_flag = (current_states > 0)
     for batch_id in range(current_states.shape[0]):

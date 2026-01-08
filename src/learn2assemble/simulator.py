@@ -292,7 +292,7 @@ def ipm_get_states(part_states, boundary_part_ids, n_sample):
         return part_states[:n_sample, :], n_sample
     else:
         test_states = ipm_empty_states(part_states.shape[1], boundary_part_ids, n_sample)
-        test_states_sub = part_states[: min(part_states.shape[0], n_sample):, :]
+        test_states_sub = part_states[: min(part_states.shape[0], n_sample), :]
         n_test_sub = test_states_sub.shape[0]
         test_states[:n_test_sub, :] = test_states_sub
         return test_states, n_test_sub
