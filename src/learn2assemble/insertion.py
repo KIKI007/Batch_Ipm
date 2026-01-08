@@ -68,6 +68,12 @@ def compute_insertion_table(parts, settings):
             [0, -1, 0],
             [0, 0, -1],
         ]) * drt_length
+    elif insertion_settings["type"] == "planar":
+        drts = np.array([
+            [1, 0, 0],
+            [0, 0, -1],
+            [-1, 0, 0],
+            [0, 0, 1]])
     else:
         return None
 

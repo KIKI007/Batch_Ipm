@@ -186,7 +186,7 @@ def backward_actions(solution_dict: dict,
     to_simulate_inds = []
     to_simulate_states = []
     labels = []
-    if table_insertion:
+    if table_insertion is not None:
         insertion_masks = compute_insertion_masks(part_states, boundary_part_ids, table_insertion)
     else:
         insertion_masks = np.ones(part_states.shape, dtype=np.bool_)
@@ -455,6 +455,7 @@ if __name__ == '__main__':
     default_settings["assembly"]["contact_shrink_ratio"] = 0.1  # for robustnessly computing the contact surfaces
     default_settings['curriculum']['n_beam'] = 64
     default_settings['curriculum']['n_sim_batch'] = 512
+    default_settings['insertion']['type'] = 'planar'
     # default_settings['env']['boundary_part_ids'] = [len(parts) - 1]
     # default_settings['ipm']["n_pcg_iter"] = 200
 
@@ -469,5 +470,5 @@ if __name__ == '__main__':
     solution = compute_solution(len(parts), default_settings['env']['boundary_part_ids'], solution_dict)
     if solution is not None:
         init_polyscope()
-        render_sequence(parts, solution, default_settings)
+        render_sequence(parts, solution, default_settings, True)
         ps.show()
