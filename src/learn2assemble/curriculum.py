@@ -14,6 +14,7 @@ from learn2assemble.grasp import check_future_graspability
 from learn2assemble.insertion import check_future_insertability, compute_insertion_table, compute_insertion_masks
 import math
 
+
 def cluster(part_states: np.ndarray,
             prev_inds: np.ndarray,
             ncluster: int):
@@ -131,16 +132,17 @@ def forward_actions(part_states: np.ndarray,
 
     return new_install_states, prev_install_states, new_release_states, prev_release_states
 
-def backward_actions(solution_dict: dict,
-                     n_robot: int,
-                     table_insertion,
-                     boundary_part_ids: list = [],
-                     *simulator):
+
+def compute_policy_labels(solution_dict: dict,
+                          n_robot: int,
+                          table_insertion,
+                          boundary_part_ids: list = [],
+                          *simulator):
     n_sim_buffer = 512
     part_states = []
     for key in solution_dict.keys():
-        part_states.append(np.array(key, dtype = np.int32))
-    part_states = np.vstack(part_states, dtype = np.int32)
+        part_states.append(np.array(key, dtype=np.int32))
+    part_states = np.vstack(part_states, dtype=np.int32)
     n_part = part_states.shape[1]
     labels = []
     n_bound = len(boundary_part_ids) + n_robot
@@ -150,7 +152,7 @@ def backward_actions(solution_dict: dict,
     to_simulate_states = []
     for part_id in range(n_part):
         # new states
-        label = np.ones(part_states.shape[0], dtype = np.int32) * (-2)
+        label = np.ones(part_states.shape[0], dtype=np.int32) * (-2)
         if part_id not in boundary_part_ids:
             num_held = np.sum(part_states == 2, axis=1)
             flag = np.logical_and(num_held < n_bound, part_states[:, part_id] == 1)
@@ -178,7 +180,7 @@ def backward_actions(solution_dict: dict,
         to_simulate_inds = np.array(to_simulate_inds)
         to_simulate_states = np.vstack(to_simulate_states)
         flag, _ = simulate_buffer(to_simulate_states, n_sim_buffer, boundary_part_ids, *simulator)
-        flag = np.any(flag.reshape(-1, 2), axis = 1)
+        flag = np.any(flag.reshape(-1, 2), axis=1)
         to_simulate_inds = to_simulate_inds[flag, :]
         labels_held[to_simulate_inds[:, 0], to_simulate_inds[:, 1]] = 0
 
@@ -191,7 +193,7 @@ def backward_actions(solution_dict: dict,
     else:
         insertion_masks = np.ones(part_states.shape, dtype=np.bool_)
     for part_id in range(n_part):
-        label = np.ones(part_states.shape[0], dtype = np.int32) * (-2)
+        label = np.ones(part_states.shape[0], dtype=np.int32) * (-2)
         if part_id not in boundary_part_ids:
             flag = (part_states[:, part_id] == 2)
             # new states
@@ -227,6 +229,7 @@ def backward_actions(solution_dict: dict,
     print("1", np.sum(labels == 1))
     return labels
 
+
 def check_terminate(part_states: np.ndarray,
                     boundary_part_ids: list = []):
     npart = part_states.shape[1]
@@ -251,11 +254,13 @@ def compute_solution(n_part, boundary_part_ids, solution_dict):
     solution.reverse()
     return np.array(solution, dtype=np.int32)
 
+
 def list_vstack(array_list, n_part):
     if len(array_list) == 0:
         return np.zeros((0, n_part))
     else:
         return np.vstack(array_list)
+
 
 def array_stack(array0, array1):
     if array0.shape[0] == 0:
@@ -264,6 +269,7 @@ def array_stack(array0, array1):
         return array0
     else:
         return np.vstack([array0, array1])
+
 
 def add_solution(curr_states, prev_states, solution_dict, n_part):
     new_curr_states = []
@@ -277,21 +283,23 @@ def add_solution(curr_states, prev_states, solution_dict, n_part):
             solution_dict[curr_state_encode].append(prev_state_encode)
     return list_vstack(new_curr_states, n_part)
 
+
 def remove_duplicated_simulation(part_states, solution_dict, n_part):
     _, inds = np.unique(part_states, return_index=True, axis=0)
-    new_curr_states = []
+    new_states = []
     new_inds = []
     for id in inds:
-        curr_state_encode = tuple(part_states[id].tolist())
-        if curr_state_encode not in solution_dict:
-            new_curr_states.append(part_states[id])
+        state_encode = tuple(part_states[id].tolist())
+        if state_encode not in solution_dict:
+            new_states.append(part_states[id])
             new_inds.append(id)
-    return list_vstack(new_curr_states, n_part), np.array(new_inds)
+    return list_vstack(new_states, n_part), np.array(new_inds)
+
 
 def simulate_buffer(part_states, n_buffer, boundary_part_ids, *simulator):
-    flag = np.zeros(part_states.shape[0], dtype = np.bool_)
+    flag = np.zeros(part_states.shape[0], dtype=np.bool_)
     it = 0
-    states = torch.tensor(part_states.copy(), dtype = torch.int32)
+    states = torch.tensor(part_states.copy(), dtype=torch.int32)
     n_step = int(math.ceil(states.shape[0] / n_buffer))
     if n_step > 2:
         progress = tqdm(total=n_step, position=1)
@@ -308,6 +316,15 @@ def simulate_buffer(part_states, n_buffer, boundary_part_ids, *simulator):
         if progress is not None:
             progress.update()
     return flag[:it], it
+
+
+def compute_height_weights(parts, part_states):
+    heights = [part.centroid[2] for part in parts]
+    heights = np.array(heights)
+    new_states = (part_states >= 1).astype(int)
+    sum_height = np.sum(new_states * heights[None, :], axis = 1)
+    weights = np.power(sum_height, -3)
+    return weights
 
 def forward_curriculum(parts: list[Trimesh],
                        contacts: list[dict],
@@ -330,8 +347,8 @@ def forward_curriculum(parts: list[Trimesh],
     n_sim_batch = curriculum_settings["n_sim_batch"]
     buffer_size = int(curriculum_settings["buffer_size"])
     # init states
-    states_to_expand = np.zeros((1, len(parts)), dtype=np.int32)
-    states_to_expand[:, boundary_part_ids] = 2
+    curr_states = np.zeros((1, len(parts)), dtype=np.int32)
+    curr_states[:, boundary_part_ids] = 2
 
     # beam search
     curriculum = []
@@ -344,19 +361,21 @@ def forward_curriculum(parts: list[Trimesh],
         "input": [],
         "output": []
     }
+
     n_part = len(parts)
-    states_stack = np.zeros((0, n_part), dtype=np.int32)
-    states_to_simulate = np.zeros((0, n_part), dtype=np.int32)
-    prev_states_to_simulate = np.zeros((0, n_part), dtype=np.int32)
-    solution_dict = {tuple(states_to_expand[0].tolist()): []}
+    states_queue = np.zeros((0, n_part), dtype=np.int32)
+    simulation_buffer = np.zeros((0, n_part), dtype=np.int32)
+    prev_simulation_buffer = np.zeros((0, n_part), dtype=np.int32)
+    solution_dict = {tuple(curr_states[0].tolist()): []}
+
     complete_state = np.ones(n_part, dtype=np.int32)
     complete_state[boundary_part_ids] = 2
     encode_complete_state = tuple(complete_state.tolist())
 
-    while (states_to_expand.shape[0] > 0):
-        install_states, prev_install_states, release_states, prev_release_states = forward_actions(states_to_expand,
+    while (curr_states.shape[0] > 0):
+        install_states, prev_install_states, release_states, prev_release_states = forward_actions(curr_states,
                                                                                                    n_robot,
-                                                                                                      boundary_part_ids)
+                                                                                                   boundary_part_ids)
 
         # install
         if install_states.shape[0] > 0:
@@ -374,26 +393,28 @@ def forward_curriculum(parts: list[Trimesh],
 
             if prev_install_states.shape[0] > 0:
                 new_states = add_solution(install_states, prev_install_states, solution_dict, n_part)
-                states_stack = array_stack(states_stack, new_states)
+                states_queue = array_stack(states_queue, new_states)
 
         # remove
-        states_to_simulate = array_stack(states_to_simulate, release_states)
-        prev_states_to_simulate = array_stack(prev_states_to_simulate, prev_release_states)
-        if states_to_simulate.shape[0] > 0:
-            states_to_simulate, inds = remove_duplicated_simulation(states_to_simulate, solution_dict, n_part)
-            prev_states_to_simulate = prev_states_to_simulate[inds, :]
+        simulation_buffer = array_stack(simulation_buffer, release_states)
+        prev_simulation_buffer = array_stack(prev_simulation_buffer, prev_release_states)
+        if simulation_buffer.shape[0] > 0:
+            print("simulation buffer shape:", simulation_buffer.shape)
+            simulation_buffer, inds = remove_duplicated_simulation(simulation_buffer, solution_dict, n_part)
+            print("simulation buffer shape:", simulation_buffer.shape)
 
-            complete_simulation = (states_stack.shape[0] == 0)
+            prev_simulation_buffer = prev_simulation_buffer[inds, :]
+            simulate_all_buffer = (states_queue.shape[0] == 0)
+
             timer = perf_counter()
-            flag, n_test = simulate_buffer(states_to_simulate,
+            simulator = [parts, contacts, settings, simulate_all_buffer]
+            flag, n_test = simulate_buffer(simulation_buffer,
                                            n_sim_batch,
                                            boundary_part_ids,
-                                           parts,
-                                           contacts,
-                                           settings, complete_simulation)
+                                           *simulator)
             if n_test > 0:
-                test_states = states_to_simulate[:n_test, :]
-                test_prev_states = prev_states_to_simulate[:n_test, :]
+                test_states = simulation_buffer[:n_test, :]
+                test_prev_states = prev_simulation_buffer[:n_test, :]
                 if verbose:
                     max_part = np.max(np.sum(test_states >= 1, axis=1))
                     print("max_part:\t", max_part,
@@ -401,38 +422,45 @@ def forward_curriculum(parts: list[Trimesh],
                           ",\t time:\t", round((time.perf_counter() - timer) / n_test, 4))
 
                 new_states = add_solution(test_states[flag, :], test_prev_states[flag, :], solution_dict, n_part)
-                states_stack = array_stack(states_stack, new_states)
+                states_queue = array_stack(states_queue, new_states)
 
-                states_to_simulate = states_to_simulate[n_test:, :]
-                prev_states_to_simulate = prev_states_to_simulate[n_test:, :]
+                simulation_buffer = simulation_buffer[n_test:, :]
+                prev_simulation_buffer = prev_simulation_buffer[n_test:, :]
 
         if encode_complete_state in solution_dict:
             break
 
-        if states_stack.shape[0] > 0:
-            # remove states
-            if states_stack.shape[0] > buffer_size:
-                states_stack = states_stack[-buffer_size: -1, :]
+        if states_queue.shape[0] > 0:
 
-            # only sample states with the max number of parts
-            num_parts = np.sum(states_stack >= 1, axis=1)
-            max_part = np.max(num_parts)
-            weights = np.ones(states_stack.shape[0], dtype=np.float32)
-            weights[num_parts < max_part] = 0.0
-            num_state = int(np.sum(weights))
+            # pop state exceed buffer
+            if states_queue.shape[0] > buffer_size:
+                states_queue = states_queue[-buffer_size: -1, :]
+
+            # option 1: number of parts
+            num_parts = np.sum(states_queue >= 1, axis=1)
+            print("min part", np.min(num_parts), "max part", np.max(num_parts))
+            # weights = np.ones(states_queue.shape[0], dtype=np.float32)
+            # weights[num_parts < max_part] = 0.0
+
+            # option 2: height
+            #weights = compute_height_weights(parts, states_queue)
+
+            # option 3:
+            weights = np.ones(states_queue.shape[0], dtype=np.float32)
+
             weights = weights / np.sum(weights)
             sample_inds = np.random.choice(
-                np.arange(states_stack.shape[0]),
-                size=min(n_beam, num_state),
+                np.arange(states_queue.shape[0]),
+                size=min(n_beam, int(np.sum(weights > 0))),
                 replace=False,  # Key parameter to ensure no duplicates
                 p=weights
             )
-            states_to_expand = states_stack[sample_inds, :]
+            curr_states = states_queue[sample_inds, :]
 
             # remove sample from queue
-            flag = np.ones(states_stack.shape[0], dtype=bool)
+            flag = np.ones(states_queue.shape[0], dtype=bool)
             flag[sample_inds] = False
-            states_stack = states_stack[flag, :]
+            states_queue = states_queue[flag, :]
         else:
             return False, solution_dict
     else:
@@ -451,10 +479,10 @@ if __name__ == '__main__':
     default_settings['curriculum']['verbose'] = True
     default_settings['rbe']['velocity_tol'] = 1E-2
     default_settings['rbe']['mu'] = 0.2
-    #default_settings['gurobi'] = {}
+    default_settings['gurobi'] = {}
     default_settings["assembly"]["contact_shrink_ratio"] = 0.1  # for robustnessly computing the contact surfaces
     default_settings['curriculum']['n_beam'] = 64
-    default_settings['curriculum']['n_sim_batch'] = 512
+    default_settings['curriculum']['n_sim_batch'] = 1024
     default_settings['insertion']['type'] = 'planar'
     # default_settings['env']['boundary_part_ids'] = [len(parts) - 1]
     # default_settings['ipm']["n_pcg_iter"] = 200
@@ -462,13 +490,14 @@ if __name__ == '__main__':
     contacts = compute_assembly_contacts(parts, default_settings)
     table_insertion, drts = compute_insertion_table(parts, default_settings)
     # table_grasp, grasp_frames, _ = compute_grasp_table(parts, default_settings)
-    succeed, solution_dict = forward_curriculum(parts, contacts, table_insertion, None, default_settings)
+    succeed, solution_dict = forward_curriculum(parts, contacts, None, None, default_settings)
     print(succeed)
     torch.save(solution_dict, ASSEMBLY_RESOURCE_DIR + "/solution.pt")
     solution_dict = torch.load(ASSEMBLY_RESOURCE_DIR + "/solution.pt")
-    labels = backward_actions(solution_dict, 2, table_insertion, default_settings['env']['boundary_part_ids'], parts, contacts, default_settings, True)
+    labels = compute_policy_labels(solution_dict, 2, None, default_settings['env']['boundary_part_ids'],
+                                   parts, contacts, default_settings, True)
     solution = compute_solution(len(parts), default_settings['env']['boundary_part_ids'], solution_dict)
     if solution is not None:
         init_polyscope()
-        render_sequence(parts, solution, default_settings, True)
+        render_sequence(parts, solution, default_settings, False)
         ps.show()
