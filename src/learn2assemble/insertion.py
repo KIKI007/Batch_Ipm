@@ -38,6 +38,10 @@ def compute_insertion_table(parts, settings):
     # drt x part x part
     # i     j        k
     # table[i, j, k] = True if move j-th part along i-th direction does not cause collisions with k-th part
+    if torch.cuda.is_available():
+        device = "cuda"
+    else:
+        device = "cpu"
 
     insertion_settings = update_default_settings(settings, "insertion",
                                        {
@@ -83,9 +87,9 @@ def compute_insertion_table(parts, settings):
 
     points = np.stack(points).astype(np.float32)
 
-    wp_points = wp.from_numpy(points, device='cuda', dtype=wp.vec3f)
-    wp_parts_id = wp.array(wp_parts_id, device='cuda', dtype=wp.uint64)
-    wp_drts = wp.from_numpy(drts, device='cuda', dtype=wp.vec3f)
+    wp_points = wp.from_numpy(points, device=device, dtype=wp.vec3f)
+    wp_parts_id = wp.array(wp_parts_id, device=device, dtype=wp.uint64)
+    wp_drts = wp.from_numpy(drts, device=device, dtype=wp.vec3f)
 
     ndrt = drts.shape[0]
     npart = len(parts)
@@ -94,9 +98,9 @@ def compute_insertion_table(parts, settings):
         for j in range(npart):
             if i != j:
                 pairs.append([i, j])
-    wp_pairs = wp.from_numpy(pairs, device='cuda', dtype=wp.vec2i)
+    wp_pairs = wp.from_numpy(pairs, device=device, dtype=wp.vec2i)
 
-    wp_dist = wp.ones((drts.shape[0], wp_pairs.shape[0], n_surface_sample), device='cuda', dtype=wp.float32) * 1E10
+    wp_dist = wp.ones((drts.shape[0], wp_pairs.shape[0], n_surface_sample), device=device, dtype=wp.float32) * 1E10
 
     wp.launch(insertion_kernel, (drts.shape[0], wp_pairs.shape[0], n_surface_sample),
               inputs=[wp_parts_id, wp_pairs, wp_points, wp_drts, wp_dist, max_dist, n_dt_sample])
