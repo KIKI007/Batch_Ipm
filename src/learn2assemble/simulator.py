@@ -637,10 +637,6 @@ def init_gurobi(settings: dict):
     }
 
 def gurobi_simulate(batch_part_states: list[dict], settings: dict):
-    gurobi_pre_computed = settings["gurobi"].get("pre-computed", False)
-    if not gurobi_pre_computed:
-        init_gurobi(settings)
-
     reset_timer('gurobi')
     env = settings["gurobi"]["env"]
 
@@ -679,6 +675,7 @@ def gurobi_simulate(batch_part_states: list[dict], settings: dict):
         else:
             flags.append(False)
             vs.append(np.zeros(rbe.nf))
+    vs = np.vstack(vs)
     vs = torch.tensor(vs, device ="cpu", dtype=torch.float32)
     vs = vs.T
     flags = torch.tensor(flags, device ="cpu", dtype=torch.bool)
@@ -693,6 +690,9 @@ def simulate(parts: list[Trimesh],
         rbe_pre_computed = settings.get("rbe", {"pre-computed": False}).get("pre-computed", False)
         if not rbe_pre_computed:
             init_rbe(parts, contacts, settings)
+        gurobi_pre_computed = settings["gurobi"].get("pre-computed", False)
+        if not gurobi_pre_computed:
+            init_gurobi(settings)
         return gurobi_simulate(batch_part_states, settings)
     else:
         ipm_computed = settings.get("ipm", {"pre-computed": False}).get("pre-computed", False)
@@ -710,14 +710,14 @@ if __name__ == '__main__':
     default_settings['rbe']['mu'] = 0.2
     default_settings["assembly"]["contact_shrink_ratio"] = 0.1  # for robustnessly computing the contact surfaces
     default_settings['gurobi'] = {'nsim': 32}
-    n_batch = 1024
+    n_batch = 8
     torch.manual_seed(0)
     name = "tetris-999"
     reset_timer("load_assembly")
     parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + f"/{name}")
     end_timer("load_assembly")
 
-    boundary = [len(parts) - 1]
+    boundary = [0]
     default_settings['env']['boundary_part_ids'] = boundary
 
     filename = os.path.join(RESOURCE_DIR, f"curriculum/{name}.pt")
