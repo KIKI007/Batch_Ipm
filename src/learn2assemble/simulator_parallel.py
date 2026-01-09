@@ -322,4 +322,7 @@ if __name__ == '__main__':
     # sim_datas = ipm_split_states(ipm_settings_cpu, part_states, n_batch)
     # v_fp32, stable_fp32, avg_sim_time, avg_success_rate = ipm_simulate_parallel(sim_datas, simulators)
     # ipm_terminate(simulators)
+    
+    timer = perf_counter()
     v_fp32, stable_fp32 = gurobi_simulate_parallel(parts, contacts, part_states, default_settings)
+    print("avg time", (perf_counter() - timer) / n_batch)
