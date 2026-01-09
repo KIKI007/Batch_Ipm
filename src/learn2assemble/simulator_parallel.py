@@ -286,10 +286,10 @@ if __name__ == '__main__':
 
     os.environ['MKL_THREADING_LAYER'] = 'GNU'
     os.environ['MKL_SERVICE_FORCE_INTEL'] = '1'
-    try:
-        mp.set_start_method('spawn', force=True)
-    except RuntimeError:
-        exit(0)
+    # try:
+    #     mp.set_start_method('spawn', force=True)
+    # except RuntimeError:
+    #     exit(0)
 
     n_batch = 2048
     torch.manual_seed(0)
