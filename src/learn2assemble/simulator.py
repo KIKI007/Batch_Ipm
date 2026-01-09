@@ -709,7 +709,6 @@ if __name__ == '__main__':
 
     default_settings['rbe']['mu'] = 0.2
     default_settings["assembly"]["contact_shrink_ratio"] = 0.1  # for robustnessly computing the contact surfaces
-    default_settings['gurobi'] = {'nsim': 32}
     n_batch = 8
     torch.manual_seed(0)
     name = "tetris-999"
@@ -752,6 +751,7 @@ if __name__ == '__main__':
 
     gpus = np.arange(torch.cuda.device_count())
     devices = [f"cuda:{gpu_id}" for gpu_id in gpus]
+    v_fp32, stable_fp32 = simulate(parts, contacts, part_states, default_settings)
 
     if torch.cuda.is_available():
         torch.cuda.synchronize()

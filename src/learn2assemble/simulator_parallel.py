@@ -246,7 +246,7 @@ def gurobi_simulate_parallel(batch_part_states: list[dict], settings: dict):
 
     velocity = []
     stable_flag = []
-    
+
     for id in range(n_step):
         velocity.append(return_dict[id][0])
         stable_flag.append(return_dict[id][1])
