@@ -629,7 +629,7 @@ def init_gurobi(settings: dict):
         "OptimalityTol": 1E-6,
         "OutputFlag": settings["rbe"]["verbose"],
         "Method": -1,
-        "GRB_INT_PAR_THREADS": 4
+        "Threads": 4
     }
     env = gp.Env(params=params)
     settings["gurobi"] = {
