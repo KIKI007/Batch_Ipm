@@ -239,7 +239,7 @@ def gurobi_simulate_terminate(*simulator):
     for proc in jobs:
         proc.join()
 
-def gurobi_simulate_parallel(batch_part_states: list[dict], *simulator):
+def gurobi_simulate_parallel(batch_part_states: list[dict], simulator):
     jobs, in_queue, out_queue = simulator[0], simulator[1], simulator[2]
 
     torch.cuda.synchronize()
