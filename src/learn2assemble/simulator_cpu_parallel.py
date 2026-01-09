@@ -19,7 +19,7 @@ def gurobi_simulate_parallel(parts, contacts, batch_part_states, settings: dict)
     if not rbe_pre_computed:
         init_rbe(parts, contacts, settings)
     num_cores = os.cpu_count()
-    n_parallel = settings['gurobi'].get('nsim', num_cores // 2)
+    n_parallel = settings['gurobi'].get('nsim', num_cores)
     manager = mp.Manager()
     return_dict = manager.dict()
 
