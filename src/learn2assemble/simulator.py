@@ -745,12 +745,6 @@ if __name__ == '__main__':
     contacts = compute_assembly_contacts(parts, default_settings)
     end_timer('contact')
 
-    reset_timer('init ipm')
-    ipm_settings = ipm_init(parts, contacts, default_settings)
-    end_timer('init ipm')
-
-    gpus = np.arange(torch.cuda.device_count())
-    devices = [f"cuda:{gpu_id}" for gpu_id in gpus]
     v_fp32, stable_fp32 = simulate(parts, contacts, part_states, default_settings)
 
     if torch.cuda.is_available():
@@ -762,7 +756,7 @@ if __name__ == '__main__':
         torch.cuda.synchronize()
     sim_time = perf_counter() - timer
 
-    print("time ", sim_time)
+    print("time ", sim_time / n_batch)
     print(torch.sum(stable_fp32).item() / stable_fp32.shape[0])
     print_logger(1)
 
