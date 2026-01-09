@@ -737,7 +737,7 @@ if __name__ == '__main__':
         "n_pcg_eval_iter": 10,
         "x_bound_tol": 1E-5,
         "kkt_conv_eps": 1E-4,
-        "float_type": torch.float16,
+        "float_type": torch.float32,
     }
 
     reset_timer('contact')
