@@ -277,7 +277,10 @@ if __name__ == '__main__':
     from learn2assemble.render import *
     from learn2assemble.assembly import load_assembly_from_files, compute_assembly_contacts
     import os
-
+    import threading
+    num_threads = threading.active_count()
+    print("num_threads", num_threads)
+    
     default_settings['rbe']['mu'] = 0.2
     default_settings["assembly"]["contact_shrink_ratio"] = 0.1  # for robustnessly computing the contact surfaces
 
@@ -293,7 +296,7 @@ if __name__ == '__main__':
     name = "tetris-999"
     parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + f"/{name}")
     boundary = [0]
-    default_settings['gurobi'] = {"nsim": 112}
+    default_settings['gurobi'] = {"nsim": num_threads}
     default_settings['env']['boundary_part_ids'] = boundary
 
     filename = os.path.join(RESOURCE_DIR, f"curriculum/{name}.pt")
