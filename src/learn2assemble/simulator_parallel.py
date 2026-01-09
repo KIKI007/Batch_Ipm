@@ -196,7 +196,6 @@ def gurobi_simulate_parallel_proc(parts, contacts,
                                out_queue: mp.Queue):
 
     settings = copy.deepcopy(settings_cpu)
-    init_rbe(parts, contacts, settings)
     init_gurobi(settings)
 
     # compute
@@ -211,7 +210,7 @@ def gurobi_simulate_parallel_proc(parts, contacts,
     return
 
 
-def gurobi_simulate_parallel(parts, contacts, batch_part_states: list[dict], settings: dict):
+def gurobi_simulate_parallel(batch_part_states: list[dict], settings: dict):
     n_parallel = settings['gurobi'].get('nsim', 32)
 
     manager = mp.Manager()
@@ -222,9 +221,7 @@ def gurobi_simulate_parallel(parts, contacts, batch_part_states: list[dict], set
     jobs = []
     for id in range(n_parallel):
         p = mp.Process(target=gurobi_simulate_parallel_proc,
-                       args=(parts,
-                             contacts,
-                             settings,
+                       args=(settings,
                              in_queue,
                              out_queue))
         jobs.append(p)
@@ -325,5 +322,6 @@ if __name__ == '__main__':
     # ipm_terminate(simulators)
 
     timer = perf_counter()
+    init_rbe(parts, contacts, default_settings)
     v_fp32, stable_fp32 = gurobi_simulate_parallel(parts, contacts, part_states, default_settings)
     print("avg time", (perf_counter() - timer) / n_batch)
