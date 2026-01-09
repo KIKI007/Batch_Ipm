@@ -27,7 +27,6 @@ def gurobi_simulate_parallel(parts, contacts, batch_part_states, settings: dict)
     jobs = []
     n_batch = batch_part_states.shape[0] // n_parallel
     # read result
-    timer = perf_counter()
     for id in range(n_parallel):
         if id == n_parallel - 1:
             test_states = batch_part_states[id * n_batch : , :]
@@ -73,4 +72,6 @@ if __name__ == '__main__':
 
     # check
     contacts = compute_assembly_contacts(parts, default_settings)
-    v_fp32, stable_fp32 = gurobi_simulate_parallel(parts, contacts, part_states, default_settings)
+    timer = perf_counter()
+    stable_fp32 = gurobi_simulate_parallel(parts, contacts, part_states, default_settings)
+    print("avg time:\t", (perf_counter() - timer) / stable_fp32.shape[0])
