@@ -190,8 +190,7 @@ def ipm_search_parameters_parallel(ipm_settings: dict,
         return False
 
 
-def gurobi_simulate_parallel_proc(parts, contacts,
-                               settings_cpu,
+def gurobi_simulate_parallel_proc(settings_cpu,
                                in_queue: mp.Queue,
                                out_queue: mp.Queue):
 
