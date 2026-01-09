@@ -242,7 +242,7 @@ def gurobi_simulate_terminate(simulator):
 def gurobi_simulate_parallel(batch_part_states: list[dict], simulator):
     jobs, in_queue, out_queue = simulator[0], simulator[1], simulator[2]
 
-    torch.cuda.synchronize()
+    #torch.cuda.synchronize()
     timer = perf_counter()
     # start simulation
     n_step = batch_part_states.shape[0]
