@@ -226,6 +226,7 @@ def gurobi_simulate_parallel(batch_part_states: list[dict], settings: dict):
         p.start()
         print(f"start process {id}")
 
+    torch.cuda.synchronize()
     timer = perf_counter()
     # start simulation
     n_step = batch_part_states.shape[0]
@@ -283,7 +284,7 @@ if __name__ == '__main__':
     name = "tetris-999"
     parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + f"/{name}")
     boundary = [0]
-    default_settings['gurobi'] = {"nsim": 64}
+    default_settings['gurobi'] = {"nsim": 16}
     default_settings['env']['boundary_part_ids'] = boundary
 
     filename = os.path.join(RESOURCE_DIR, f"curriculum/{name}.pt")
