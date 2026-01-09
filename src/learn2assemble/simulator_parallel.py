@@ -260,7 +260,7 @@ def gurobi_simulate_parallel(batch_part_states: list[dict], settings: dict):
     for proc in jobs:
         proc.join()
 
-    print("avg time", (perf_counter() - timer) / n_batch)
+    print("avg time", (perf_counter() - timer) / stable_flag.shape[0])
     return velocity, stable_flag
 
 if __name__ == '__main__':
