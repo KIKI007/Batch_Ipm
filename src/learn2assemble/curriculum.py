@@ -255,9 +255,9 @@ def compute_solution(n_part, boundary_part_ids, solution_dict):
     return np.array(solution, dtype=np.int32)
 
 
-def list_vstack(array_list, n_part):
+def list_vstack(array_list):
     if len(array_list) == 0:
-        return np.zeros((0, n_part))
+        return np.zeros((0, 0))
     else:
         return np.vstack(array_list)
 
@@ -270,31 +270,29 @@ def array_stack(array0, array1):
     else:
         return np.vstack([array0, array1])
 
-
-def add_solution(curr_states, prev_states, solution_dict, n_part):
-    new_curr_states = []
+def add_solution(curr_states, prev_states, solution_dict, states_queue):
+    new_states = []
     for id in range(curr_states.shape[0]):
         curr_state_encode = tuple(curr_states[id].tolist())
         prev_state_encode = tuple(prev_states[id].tolist())
         if curr_state_encode not in solution_dict:
             solution_dict[curr_state_encode] = [prev_state_encode]
-            new_curr_states.append(curr_states[id])
+            new_states.append(curr_states[id])
         else:
             solution_dict[curr_state_encode].append(prev_state_encode)
-    return list_vstack(new_curr_states, n_part)
+    new_states = list_vstack(new_states)
+    return array_stack(states_queue, new_states)
 
-
-def remove_duplicated_simulation(part_states, solution_dict, n_part):
-    _, inds = np.unique(part_states, return_index=True, axis=0)
+def remove_duplicated_simulation(simulation_buffer, prev_simulation_buffer, solution_dict):
+    _, inds = np.unique(simulation_buffer, return_index=True, axis=0)
     new_states = []
-    new_inds = []
+    new_prev_states = []
     for id in inds:
-        state_encode = tuple(part_states[id].tolist())
+        state_encode = tuple(simulation_buffer[id].tolist())
         if state_encode not in solution_dict:
-            new_states.append(part_states[id])
-            new_inds.append(id)
-    return list_vstack(new_states, n_part), np.array(new_inds)
-
+            new_states.append(simulation_buffer[id])
+            new_prev_states.append(prev_simulation_buffer[id])
+    return list_vstack(new_states), list_vstack(new_prev_states)
 
 def simulate_buffer(part_states, n_buffer, boundary_part_ids, *simulator):
     flag = np.zeros(part_states.shape[0], dtype=np.bool_)
@@ -392,18 +390,13 @@ def forward_curriculum(parts: list[Trimesh],
                 prev_install_states = prev_install_states[graspability_flag]
 
             if prev_install_states.shape[0] > 0:
-                new_states = add_solution(install_states, prev_install_states, solution_dict, n_part)
-                states_queue = array_stack(states_queue, new_states)
+                states_queue = add_solution(install_states, prev_install_states, solution_dict, states_queue)
 
         # remove
         simulation_buffer = array_stack(simulation_buffer, release_states)
         prev_simulation_buffer = array_stack(prev_simulation_buffer, prev_release_states)
         if simulation_buffer.shape[0] > 0:
-            print("simulation buffer shape:", simulation_buffer.shape)
-            simulation_buffer, inds = remove_duplicated_simulation(simulation_buffer, solution_dict, n_part)
-            print("simulation buffer shape:", simulation_buffer.shape)
-
-            prev_simulation_buffer = prev_simulation_buffer[inds, :]
+            simulation_buffer, prev_simulation_buffer = remove_duplicated_simulation(simulation_buffer, prev_simulation_buffer, solution_dict)
             simulate_all_buffer = (states_queue.shape[0] == 0)
 
             timer = perf_counter()
@@ -416,14 +409,13 @@ def forward_curriculum(parts: list[Trimesh],
                 test_states = simulation_buffer[:n_test, :]
                 test_prev_states = prev_simulation_buffer[:n_test, :]
                 if verbose:
-                    max_part = np.max(np.sum(test_states >= 1, axis=1))
-                    print("max_part:\t", max_part,
+                    npart = np.sum(test_states >= 1, axis=1)
+                    print("min:\t", np.min(npart),
+                          ",\t max:\t", np.max(npart),
                           ",\t sim:\t", f"{np.sum(flag)}/{n_test}",
                           ",\t time:\t", round((time.perf_counter() - timer) / n_test, 4))
 
-                new_states = add_solution(test_states[flag, :], test_prev_states[flag, :], solution_dict, n_part)
-                states_queue = array_stack(states_queue, new_states)
-
+                states_queue = add_solution(test_states[flag, :], test_prev_states[flag, :], solution_dict, states_queue)
                 simulation_buffer = simulation_buffer[n_test:, :]
                 prev_simulation_buffer = prev_simulation_buffer[n_test:, :]
 
@@ -438,15 +430,14 @@ def forward_curriculum(parts: list[Trimesh],
 
             # option 1: number of parts
             num_parts = np.sum(states_queue >= 1, axis=1)
-            print("min part", np.min(num_parts), "max part", np.max(num_parts))
-            # weights = np.ones(states_queue.shape[0], dtype=np.float32)
-            # weights[num_parts < max_part] = 0.0
+            weights = np.ones(states_queue.shape[0], dtype=np.float32)
+            weights[num_parts + 1 < np.max(num_parts)] = 0.0
 
             # option 2: height
             #weights = compute_height_weights(parts, states_queue)
 
             # option 3:
-            weights = np.ones(states_queue.shape[0], dtype=np.float32)
+            #weights = np.ones(states_queue.shape[0], dtype=np.float32)
 
             weights = weights / np.sum(weights)
             sample_inds = np.random.choice(
@@ -474,18 +465,26 @@ if __name__ == '__main__':
     from learn2assemble.render import render_sequence, init_polyscope
     import polyscope as ps
     import polyscope.imgui as psim
+    import torch.multiprocessing as mp
 
-    parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + "/tetris-1")
+    os.environ['MKL_THREADING_LAYER'] = 'GNU'
+    os.environ['MKL_SERVICE_FORCE_INTEL'] = '1'
+    try:
+        mp.set_start_method('spawn', force=True)
+    except RuntimeError:
+        exit(0)
+
+    parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + "/tetris-5109")
     default_settings['curriculum']['verbose'] = True
     default_settings['rbe']['velocity_tol'] = 1E-2
     default_settings['rbe']['mu'] = 0.2
     default_settings['gurobi'] = {}
     default_settings["assembly"]["contact_shrink_ratio"] = 0.1  # for robustnessly computing the contact surfaces
     default_settings['curriculum']['n_beam'] = 64
-    default_settings['curriculum']['n_sim_batch'] = 1024
-    default_settings['insertion']['type'] = 'planar'
+    default_settings['curriculum']['n_sim_batch'] = 512
+    #default_settings['insertion']['type'] = 'planar'
     # default_settings['env']['boundary_part_ids'] = [len(parts) - 1]
-    # default_settings['ipm']["n_pcg_iter"] = 200
+    default_settings['ipm']["n_pcg_iter"] = 200
 
     contacts = compute_assembly_contacts(parts, default_settings)
     table_insertion, drts = compute_insertion_table(parts, default_settings)

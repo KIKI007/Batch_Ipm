@@ -1,5 +1,4 @@
 import numpy as np
-
 from learn2assemble.simulator import *
 from tqdm import tqdm
 
@@ -190,6 +189,82 @@ def ipm_search_parameters_parallel(ipm_settings: dict,
         print(f"Failed to find pcg iter with a maximum {best_acc: .2f} success rate")
         return False
 
+
+def gurobi_simulate_parallel_proc(parts, contacts,
+                               settings_cpu,
+                               in_queue: mp.Queue,
+                               out_queue: mp.Queue):
+
+    settings = copy.deepcopy(settings_cpu)
+    init_rbe(parts, contacts, settings)
+
+    # compute
+    while True:
+        data = in_queue.get()
+        if data is None:
+            break
+        job_id, part_states = data
+        part_states = part_states.reshape(1, -1)
+        velocity, flags = gurobi_simulate(part_states, settings)
+        out_queue.put((job_id, velocity.cpu(), flags.cpu()))
+    return
+
+
+def gurobi_simulate_parallel(parts, contacts, batch_part_states: list[dict], settings: dict):
+    n_parallel = settings['gurobi'].get('nsim', 32)
+
+    manager = mp.Manager()
+    in_queue = manager.Queue()
+    out_queue = manager.Queue()
+
+    # init n_parallel process
+    jobs = []
+    for id in range(n_parallel):
+        p = mp.Process(target=gurobi_simulate_parallel_proc,
+                       args=(parts,
+                             contacts,
+                             settings,
+                             in_queue,
+                             out_queue))
+        jobs.append(p)
+        p.start()
+        print(f"start process {id}")
+
+    # start simulation
+    n_step = batch_part_states.shape[0]
+    for id in range(n_step):
+        in_queue.put((id, batch_part_states[id, :]))
+
+    return_dict = {}
+    num_done = 0
+    with tqdm(total=n_step, position=1) as progress:
+        while num_done < n_step:
+            job_id, velocity, stable_flag = out_queue.get()
+            return_dict[job_id] = (velocity, stable_flag)
+            curr_acc = torch.sum(stable_flag).item() / stable_flag.shape[0]
+            progress.set_postfix_str(f"{curr_acc: .3f}")
+            progress.update()
+            num_done = num_done + 1
+
+    velocity = []
+    stable_flag = []
+    for id in range(n_step):
+        velocity.append(return_dict[id][0])
+        stable_flag.append(return_dict[id][1])
+    velocity = torch.vstack(velocity)
+    stable_flag = torch.hstack(stable_flag)
+
+    # end simulation
+    # for stop the solver
+    for id in range(n_parallel):
+        in_queue.put(None)
+
+    # terminate all process
+    for proc in jobs:
+        proc.join()
+
+    return velocity, stable_flag
+
 if __name__ == '__main__':
     from learn2assemble import ASSEMBLY_RESOURCE_DIR, default_settings, RESOURCE_DIR
     from learn2assemble.render import *
@@ -210,7 +285,8 @@ if __name__ == '__main__':
     torch.manual_seed(0)
     name = "tetris-999"
     parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + f"/{name}")
-    boundary = [len(parts) - 1]
+    boundary = [0]
+    default_settings['gurobi'] = {"nsim":4}
     default_settings['env']['boundary_part_ids'] = boundary
 
     filename = os.path.join(RESOURCE_DIR, f"curriculum/{name}.pt")
@@ -231,19 +307,19 @@ if __name__ == '__main__':
     }
 
     contacts = compute_assembly_contacts(parts, default_settings)
-
-    ipm_settings = ipm_init(parts, contacts, default_settings)
-    ipm_settings_cpu = ipm_update_device(ipm_settings, 'cpu')
-
-    gpus = np.arange(torch.cuda.device_count())
-    devices = [f"cuda:{gpu_id}" for gpu_id in gpus]
-    simulators = ipm_init_simulate_parallel(ipm_settings_cpu, devices, n_batch)
-
-    # search parameters
-    ipm_search_parameters_parallel(ipm_settings_cpu, part_states, simulators, 64, 0.9)
-
-    # compute
-    n_batch = 512
-    sim_datas = ipm_split_states(ipm_settings_cpu, part_states, n_batch)
-    v_fp32, stable_fp32, avg_sim_time, avg_success_rate = ipm_simulate_parallel(sim_datas, simulators)
-    ipm_terminate(simulators)
+    # ipm_settings = ipm_init(parts, contacts, default_settings)
+    # ipm_settings_cpu = ipm_update_device(ipm_settings, 'cpu')
+    #
+    # gpus = np.arange(torch.cuda.device_count())
+    # devices = [f"cuda:{gpu_id}" for gpu_id in gpus]
+    # simulators = ipm_init_simulate_parallel(ipm_settings_cpu, devices, n_batch)
+    #
+    # # search parameters
+    # ipm_search_parameters_parallel(ipm_settings_cpu, part_states, simulators, 64, 0.9)
+    #
+    # # compute
+    # n_batch = 512
+    # sim_datas = ipm_split_states(ipm_settings_cpu, part_states, n_batch)
+    # v_fp32, stable_fp32, avg_sim_time, avg_success_rate = ipm_simulate_parallel(sim_datas, simulators)
+    # ipm_terminate(simulators)
+    v_fp32, stable_fp32 = gurobi_simulate_parallel(parts, contacts, part_states, default_settings)

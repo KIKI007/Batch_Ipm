@@ -3,12 +3,14 @@ from time import perf_counter
 import gurobipy as gp
 import torch
 from gurobipy import GRB
+from sympy.physics.units import velocity
+
 from learn2assemble.rbe import *
 from types import SimpleNamespace
 import platform
 from learn2assemble.rbe import num_vars
 import torch.multiprocessing as mp
-
+from tqdm import tqdm
 logger = {
     'timer': {},
     'log': {},
@@ -619,7 +621,7 @@ def ipm_simulate(batch_part_states: torch.tensor, ipm_settings: dict):
     ipm_settings["pcg_count"] = ipm.pcg_count
     return velocity, (velocity_inf_nrm < ipm.velocity_tol)
 
-def init_gurobi(parts, contacts, settings: dict):
+def init_gurobi(settings: dict):
     params = {
         "WLSACCESSID": "9d6cfee4-4a06-46b1-a7c8-a7445b4e62a6",
         "WLSSECRET": "563345f3-3017-488e-a549-eb6742256f41",
@@ -634,8 +636,11 @@ def init_gurobi(parts, contacts, settings: dict):
         "pre-computed": True
     }
 
-def simulate_gurobi(batch_part_states: list[dict],
-                    settings: dict):
+def gurobi_simulate(batch_part_states: list[dict], settings: dict):
+    gurobi_pre_computed = settings["gurobi"].get("pre-computed", False)
+    if not gurobi_pre_computed:
+        init_gurobi(settings)
+
     reset_timer('gurobi')
     env = settings["gurobi"]["env"]
 
@@ -688,10 +693,7 @@ def simulate(parts: list[Trimesh],
         rbe_pre_computed = settings.get("rbe", {"pre-computed": False}).get("pre-computed", False)
         if not rbe_pre_computed:
             init_rbe(parts, contacts, settings)
-        gurobi_pre_computed = settings["gurobi"].get("pre-computed", False)
-        if not gurobi_pre_computed:
-            init_gurobi(parts, contacts, settings)
-        return simulate_gurobi(batch_part_states, settings)
+        return gurobi_simulate(batch_part_states, settings)
     else:
         ipm_computed = settings.get("ipm", {"pre-computed": False}).get("pre-computed", False)
         if not ipm_computed:
@@ -707,7 +709,7 @@ if __name__ == '__main__':
 
     default_settings['rbe']['mu'] = 0.2
     default_settings["assembly"]["contact_shrink_ratio"] = 0.1  # for robustnessly computing the contact surfaces
-
+    default_settings['gurobi'] = {'nsim': 32}
     n_batch = 1024
     torch.manual_seed(0)
     name = "tetris-999"
@@ -746,8 +748,6 @@ if __name__ == '__main__':
 
     reset_timer('init ipm')
     ipm_settings = ipm_init(parts, contacts, default_settings)
-    v_fp32, stable_fp32 = ipm_simulate(part_states, ipm_settings)
-    v_fp32, stable_fp32 = simulate(parts, contacts, part_states, {"gurobi": {}})
     end_timer('init ipm')
 
     gpus = np.arange(torch.cuda.device_count())
@@ -757,7 +757,7 @@ if __name__ == '__main__':
         torch.cuda.synchronize()
     timer = perf_counter()
 
-    v_fp32, stable_fp32 = ipm_simulate(part_states, ipm_settings)
+    v_fp32, stable_fp32 = simulate(parts, contacts, part_states, default_settings)
     if torch.cuda.is_available():
         torch.cuda.synchronize()
     sim_time = perf_counter() - timer
