@@ -475,10 +475,10 @@ if __name__ == '__main__':
     #default_settings['gurobi'] = {}
     default_settings["assembly"]["contact_shrink_ratio"] = 0.1  # for robustnessly computing the contact surfaces
     default_settings['curriculum']['n_beam'] = 64
-    default_settings['curriculum']['n_sim_batch'] = 512
+    default_settings['curriculum']['n_sim_batch'] = 1024
     #default_settings['insertion']['type'] = 'planar'
     # default_settings['env']['boundary_part_ids'] = [len(parts) - 1]
-    #default_settings['ipm']["n_pcg_iter"] = 200
+    default_settings['ipm']["n_pcg_iter"] = 100
 
     contacts = compute_assembly_contacts(parts, default_settings)
     table_insertion, drts = compute_insertion_table(parts, default_settings)
