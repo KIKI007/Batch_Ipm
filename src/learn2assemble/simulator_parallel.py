@@ -191,8 +191,8 @@ def ipm_search_parameters_parallel(ipm_settings: dict,
 
 
 def gurobi_simulate_parallel_proc(settings_cpu,
-                               in_queue: mp.Queue,
-                               out_queue: mp.Queue):
+                                  in_queue: mp.Queue,
+                                  out_queue: mp.Queue):
 
     settings = copy.deepcopy(settings_cpu)
     init_gurobi(settings)
