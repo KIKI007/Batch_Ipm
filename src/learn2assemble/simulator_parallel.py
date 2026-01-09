@@ -228,7 +228,7 @@ def gurobi_simulate_parallel_init(settings: dict):
 
     return jobs, in_queue, out_queue
 
-def gurobi_simulate_terminate(*simulator):
+def gurobi_simulate_terminate(simulator):
     jobs, in_queue, out_queue = simulator[0], simulator[1], simulator[2]
     # end simulation
     # for stop the solver
@@ -293,7 +293,7 @@ if __name__ == '__main__':
     name = "tetris-999"
     parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + f"/{name}")
     boundary = [0]
-    default_settings['gurobi'] = {"nsim": 32}
+    default_settings['gurobi'] = {"nsim": 64}
     default_settings['env']['boundary_part_ids'] = boundary
 
     filename = os.path.join(RESOURCE_DIR, f"curriculum/{name}.pt")
