@@ -47,7 +47,7 @@ def gurobi_simulate_parallel(batch_part_states, settings: dict):
     for id in range(n_parallel):
         velocity.append(return_dict[id][0])
         stable_flag.append(return_dict[id][1])
-    velocity = torch.vstack(velocity)
+    velocity = torch.stack(velocity)
     stable_flag = torch.hstack(stable_flag)
 
     print("avg time", (perf_counter() - timer) / stable_flag.shape[0])
