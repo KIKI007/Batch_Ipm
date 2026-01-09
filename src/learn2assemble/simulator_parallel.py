@@ -208,7 +208,7 @@ def gurobi_simulate_parallel_proc(settings_cpu,
         out_queue.put((job_id, velocity.cpu(), flags.cpu()))
     return
 
-def gurobi_simulate_parallel_init(settings: dict)
+def gurobi_simulate_parallel_init(settings: dict):
     n_parallel = settings['gurobi'].get('nsim', 32)
 
     manager = mp.Manager()
