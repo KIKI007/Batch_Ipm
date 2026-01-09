@@ -744,6 +744,8 @@ if __name__ == '__main__':
     reset_timer('contact')
     contacts = compute_assembly_contacts(parts, default_settings)
     end_timer('contact')
+    # warm up
+    v_fp32, stable_fp32 = simulate(parts, contacts, part_states, default_settings)
 
     if torch.cuda.is_available():
         torch.cuda.synchronize()
