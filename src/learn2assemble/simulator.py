@@ -731,7 +731,6 @@ if __name__ == '__main__':
     part_states = ipm_sort_states(part_states, False)
     part_states, _ = ipm_get_states(part_states, boundary, n_batch)
 
-    default_settings['gurobi'] = {}
     default_settings['ipm'] = {
         "n_iter": 30,
         "n_pcg_iter": 200,
