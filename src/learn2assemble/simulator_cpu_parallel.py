@@ -58,7 +58,7 @@ if __name__ == '__main__':
     from learn2assemble.render import *
     from learn2assemble.assembly import load_assembly_from_files, compute_assembly_contacts
     import os
-    num_cores = os.cpu_count() * 2
+    num_cores = os.cpu_count()
     print("num_threads", num_cores)
 
     default_settings['rbe']['mu'] = 0.2
