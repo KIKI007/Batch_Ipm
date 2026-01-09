@@ -1,6 +1,44 @@
 import numpy as np
 from learn2assemble.simulator import *
 from tqdm import tqdm
+from simulator import *
+import multiprocessing as mp
+
+def ipm_search_parameters_parallel(ipm_settings: dict,
+                                   part_states,
+                                   simulators,
+                                   nsample=32,
+                                   acc_tol=0.9):
+    # load data
+    new_states = ipm_sort_states(part_states, ascend=False)
+    test_states, n_test_sub = ipm_get_states(new_states, ipm_settings['boundary_part_ids'], n_sample=nsample)
+    n_pcg_it = ipm_settings["n_pcg_iter"]
+    best_acc = 0.0
+    sim_datas = []
+    scale_list = [1, 1.5, 2, 2.5, 3, 3.5, 4]
+    #scale_list = [1, 2]
+    for id, scale in enumerate(scale_list):
+        n_pcg_iter = int(n_pcg_it * scale)
+        sim_datas.append((id, test_states, n_test_sub, n_pcg_iter))
+
+    # simulate
+    v, flag, x, y = ipm_simulate_parallel(sim_datas, simulators)
+    flag = flag.reshape(-1, n_test_sub)
+    acc = torch.sum(flag, dim = 1) / n_test_sub
+    print("acc:", acc)
+
+    if (acc > acc_tol).any():
+        indices = torch.arange(len(sim_datas))
+        indices = indices[acc > acc_tol]
+        index = torch.min(indices)
+        best_acc = acc[index]
+        n_pcg_iter = sim_datas[index][3]
+        ipm_settings["n_pcg_iter"] = n_pcg_iter
+        print("num pcg iter = ", ipm_settings["n_pcg_iter"], f" with a {best_acc: .2f} success rate")
+        return True
+    else:
+        print(f"Failed to find pcg iter with a maximum {best_acc: .2f} success rate")
+        return False
 
 def ipm_warmup(batch_part_states: torch.tensor, settings: dict):
     active = logger['activate']
@@ -98,7 +136,6 @@ def ipm_split_states(ipm_settings_cpu,
         sim_datas.append((id, part_states, n_sub_states, ipm_settings_cpu['n_pcg_iter']))
     return sim_datas
 
-
 def ipm_terminate(simulators):
     jobs, in_queue, out_queue = simulators
     n_parallel = len(jobs)
@@ -152,43 +189,6 @@ def ipm_simulate_parallel(sim_datas, simulators):
     avg_sim_time = (perf_counter() - timer) / n_state
     avg_success_rate = torch.sum(stable_flag).item() / n_state
     return velocity, stable_flag, avg_sim_time, avg_success_rate
-
-def ipm_search_parameters_parallel(ipm_settings: dict,
-                                   part_states,
-                                   simulators,
-                                   nsample=32,
-                                   acc_tol=0.9):
-    # load data
-    new_states = ipm_sort_states(part_states, ascend=False)
-    test_states, n_test_sub = ipm_get_states(new_states, ipm_settings['boundary_part_ids'], n_sample=nsample)
-    n_pcg_it = ipm_settings["n_pcg_iter"]
-    best_acc = 0.0
-    sim_datas = []
-    scale_list = [1, 1.5, 2, 2.5, 3, 3.5, 4]
-    #scale_list = [1, 2]
-    for id, scale in enumerate(scale_list):
-        n_pcg_iter = int(n_pcg_it * scale)
-        sim_datas.append((id, test_states, n_test_sub, n_pcg_iter))
-
-    # simulate
-    v, flag, x, y = ipm_simulate_parallel(sim_datas, simulators)
-    flag = flag.reshape(-1, n_test_sub)
-    acc = torch.sum(flag, dim = 1) / n_test_sub
-    print("acc:", acc)
-
-    if (acc > acc_tol).any():
-        indices = torch.arange(len(sim_datas))
-        indices = indices[acc > acc_tol]
-        index = torch.min(indices)
-        best_acc = acc[index]
-        n_pcg_iter = sim_datas[index][3]
-        ipm_settings["n_pcg_iter"] = n_pcg_iter
-        print("num pcg iter = ", ipm_settings["n_pcg_iter"], f" with a {best_acc: .2f} success rate")
-        return True
-    else:
-        print(f"Failed to find pcg iter with a maximum {best_acc: .2f} success rate")
-        return False
-
 
 def gurobi_simulate_parallel_proc(settings_cpu,
                                   in_queue: mp.Queue,
@@ -272,12 +272,12 @@ def gurobi_simulate_parallel(batch_part_states: list[dict], simulator):
     print("avg time", (perf_counter() - timer) / stable_flag.shape[0])
     return velocity, stable_flag
 
+
 if __name__ == '__main__':
     from learn2assemble import ASSEMBLY_RESOURCE_DIR, default_settings, RESOURCE_DIR
     from learn2assemble.render import *
     from learn2assemble.assembly import load_assembly_from_files, compute_assembly_contacts
     import os
-    import threading
     num_cores = os.cpu_count()
     print("num_threads", num_cores)
 
@@ -317,6 +317,7 @@ if __name__ == '__main__':
     }
 
     contacts = compute_assembly_contacts(parts, default_settings)
+
     # ipm_settings = ipm_init(parts, contacts, default_settings)
     # ipm_settings_cpu = ipm_update_device(ipm_settings, 'cpu')
     #
@@ -332,7 +333,6 @@ if __name__ == '__main__':
     # sim_datas = ipm_split_states(ipm_settings_cpu, part_states, n_batch)
     # v_fp32, stable_fp32, avg_sim_time, avg_success_rate = ipm_simulate_parallel(sim_datas, simulators)
     # ipm_terminate(simulators)
-
 
     init_rbe(parts, contacts, default_settings)
     simulator = gurobi_simulate_parallel_init(default_settings)

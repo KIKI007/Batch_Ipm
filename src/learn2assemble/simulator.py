@@ -9,8 +9,6 @@ from learn2assemble.rbe import *
 from types import SimpleNamespace
 import platform
 from learn2assemble.rbe import num_vars
-import torch.multiprocessing as mp
-from tqdm import tqdm
 logger = {
     'timer': {},
     'log': {},
