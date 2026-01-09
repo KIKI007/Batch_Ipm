@@ -2,7 +2,7 @@ import numpy as np
 from learn2assemble.simulator import *
 from tqdm import tqdm
 from simulator import *
-import multiprocessing as mp
+import torch.multiprocessing as mp
 
 def ipm_search_parameters_parallel(ipm_settings: dict,
                                    part_states,
@@ -190,113 +190,29 @@ def ipm_simulate_parallel(sim_datas, simulators):
     avg_success_rate = torch.sum(stable_flag).item() / n_state
     return velocity, stable_flag, avg_sim_time, avg_success_rate
 
-def gurobi_simulate_parallel_proc(settings_cpu,
-                                  in_queue: mp.Queue,
-                                  out_queue: mp.Queue):
-
-    settings = copy.deepcopy(settings_cpu)
-    init_gurobi(settings)
-
-    # compute
-    while True:
-        data = in_queue.get()
-        if data is None:
-            break
-        job_id, part_states = data
-        part_states = part_states.reshape(1, -1)
-        velocity, flags = gurobi_simulate(part_states, settings)
-        out_queue.put((job_id, velocity.cpu(), flags.cpu()))
-    return
-
-def gurobi_simulate_parallel_init(settings: dict):
-    n_parallel = settings['gurobi'].get('nsim', 32)
-
-    manager = mp.Manager()
-    in_queue = manager.Queue()
-    out_queue = manager.Queue()
-
-    # init n_parallel process
-    jobs = []
-    for id in range(n_parallel):
-        p = mp.Process(target=gurobi_simulate_parallel_proc,
-                       args=(settings,
-                             in_queue,
-                             out_queue))
-        jobs.append(p)
-        p.start()
-        print(f"start process {id}")
-
-    return jobs, in_queue, out_queue
-
-def gurobi_simulate_terminate(simulator):
-    jobs, in_queue, out_queue = simulator[0], simulator[1], simulator[2]
-    # end simulation
-    # for stop the solver
-    for id in range(len(jobs)):
-        in_queue.put(None)
-
-    # terminate all process
-    for proc in jobs:
-        proc.join()
-
-def gurobi_simulate_parallel(batch_part_states: list[dict], simulator):
-    jobs, in_queue, out_queue = simulator[0], simulator[1], simulator[2]
-
-    #torch.cuda.synchronize()
-    timer = perf_counter()
-    # start simulation
-    n_step = batch_part_states.shape[0]
-    for id in range(n_step):
-        in_queue.put((id, batch_part_states[id, :]))
-
-    return_dict = {}
-    num_done = 0
-    with tqdm(total=n_step, position=1) as progress:
-        while num_done < n_step:
-            job_id, velocity, stable_flag = out_queue.get()
-            return_dict[job_id] = (velocity, stable_flag)
-            curr_acc = torch.sum(stable_flag).item() / stable_flag.shape[0]
-            progress.set_postfix_str(f"{curr_acc: .3f}")
-            progress.update()
-            num_done = num_done + 1
-
-    velocity = []
-    stable_flag = []
-
-    for id in range(n_step):
-        velocity.append(return_dict[id][0])
-        stable_flag.append(return_dict[id][1])
-    velocity = torch.vstack(velocity)
-    stable_flag = torch.hstack(stable_flag)
-
-    print("avg time", (perf_counter() - timer) / stable_flag.shape[0])
-    return velocity, stable_flag
-
-
 if __name__ == '__main__':
     from learn2assemble import ASSEMBLY_RESOURCE_DIR, default_settings, RESOURCE_DIR
     from learn2assemble.render import *
     from learn2assemble.assembly import load_assembly_from_files, compute_assembly_contacts
-    import os
-    num_cores = os.cpu_count()
-    print("num_threads", num_cores)
+
+    os.environ['MKL_THREADING_LAYER'] = 'GNU'
+    os.environ['MKL_SERVICE_FORCE_INTEL'] = '1'
+    try:
+        mp.set_start_method('spawn', force=True)
+    except RuntimeError:
+        exit(0)
 
     default_settings['rbe']['mu'] = 0.2
     default_settings["assembly"]["contact_shrink_ratio"] = 0.1  # for robustnessly computing the contact surfaces
 
     os.environ['MKL_THREADING_LAYER'] = 'GNU'
     os.environ['MKL_SERVICE_FORCE_INTEL'] = '1'
-    # try:
-    #     mp.set_start_method('spawn', force=True)
-    # except RuntimeError:
-    #     exit(0)
 
     n_batch = 2048
     torch.manual_seed(0)
     name = "tetris-999"
     parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + f"/{name}")
     boundary = [0]
-    default_settings['gurobi'] = {"nsim": num_cores}
     default_settings['env']['boundary_part_ids'] = boundary
 
     filename = os.path.join(RESOURCE_DIR, f"curriculum/{name}.pt")
@@ -318,24 +234,18 @@ if __name__ == '__main__':
 
     contacts = compute_assembly_contacts(parts, default_settings)
 
-    # ipm_settings = ipm_init(parts, contacts, default_settings)
-    # ipm_settings_cpu = ipm_update_device(ipm_settings, 'cpu')
-    #
-    # gpus = np.arange(torch.cuda.device_count())
-    # devices = [f"cuda:{gpu_id}" for gpu_id in gpus]
-    # simulators = ipm_init_simulate_parallel(ipm_settings_cpu, devices, n_batch)
-    #
-    # # search parameters
-    # ipm_search_parameters_parallel(ipm_settings_cpu, part_states, simulators, 64, 0.9)
-    #
-    # # compute
-    # n_batch = 512
-    # sim_datas = ipm_split_states(ipm_settings_cpu, part_states, n_batch)
-    # v_fp32, stable_fp32, avg_sim_time, avg_success_rate = ipm_simulate_parallel(sim_datas, simulators)
-    # ipm_terminate(simulators)
+    ipm_settings = ipm_init(parts, contacts, default_settings)
+    ipm_settings_cpu = ipm_update_device(ipm_settings, 'cpu')
 
-    init_rbe(parts, contacts, default_settings)
-    simulator = gurobi_simulate_parallel_init(default_settings)
-    for id in range(8):
-        v_fp32, stable_fp32 = gurobi_simulate_parallel(part_states, simulator)
-    gurobi_simulate_terminate(simulator)
+    gpus = np.arange(torch.cuda.device_count())
+    devices = [f"cuda:{gpu_id}" for gpu_id in gpus]
+    simulators = ipm_init_simulate_parallel(ipm_settings_cpu, devices, n_batch)
+
+    # search parameters
+    ipm_search_parameters_parallel(ipm_settings_cpu, part_states, simulators, 64, 0.9)
+
+    # compute
+    n_batch = 512
+    sim_datas = ipm_split_states(ipm_settings_cpu, part_states, n_batch)
+    v_fp32, stable_fp32, avg_sim_time, avg_success_rate = ipm_simulate_parallel(sim_datas, simulators)
+    ipm_terminate(simulators)

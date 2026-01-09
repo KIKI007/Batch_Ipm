@@ -465,14 +465,6 @@ if __name__ == '__main__':
     from learn2assemble.render import render_sequence, init_polyscope
     import polyscope as ps
     import polyscope.imgui as psim
-    import torch.multiprocessing as mp
-
-    os.environ['MKL_THREADING_LAYER'] = 'GNU'
-    os.environ['MKL_SERVICE_FORCE_INTEL'] = '1'
-    try:
-        mp.set_start_method('spawn', force=True)
-    except RuntimeError:
-        exit(0)
 
     parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + "/tetris-5109")
     default_settings['curriculum']['verbose'] = True

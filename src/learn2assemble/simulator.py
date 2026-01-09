@@ -628,7 +628,6 @@ def init_gurobi(settings: dict):
         "OutputFlag": settings["rbe"]["verbose"],
         "Method": -1,
         "Threads": 2,
-        "MIPFocus": 1
     }
     env = gp.Env(params=params)
     settings["gurobi"] = {
@@ -709,7 +708,7 @@ if __name__ == '__main__':
 
     default_settings['rbe']['mu'] = 0.2
     default_settings["assembly"]["contact_shrink_ratio"] = 0.1  # for robustnessly computing the contact surfaces
-    n_batch = 2048
+    n_batch = 32
     torch.manual_seed(0)
     name = "tetris-999"
     reset_timer("load_assembly")
@@ -731,7 +730,7 @@ if __name__ == '__main__':
     part_states = ipm_sort_states(part_states, False)
     part_states, _ = ipm_get_states(part_states, boundary, n_batch)
 
-    # default_settings['gurobi'] = {}
+    default_settings['gurobi'] = {}
     default_settings['ipm'] = {
         "n_iter": 30,
         "n_pcg_iter": 200,
@@ -744,8 +743,6 @@ if __name__ == '__main__':
     reset_timer('contact')
     contacts = compute_assembly_contacts(parts, default_settings)
     end_timer('contact')
-
-    v_fp32, stable_fp32 = simulate(parts, contacts, part_states, default_settings)
 
     if torch.cuda.is_available():
         torch.cuda.synchronize()
