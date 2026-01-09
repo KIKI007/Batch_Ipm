@@ -12,6 +12,7 @@ from tqdm import tqdm
 from learn2assemble.simulator import ipm_get_states, simulate
 from learn2assemble.grasp import check_future_graspability
 from learn2assemble.insertion import check_future_insertability, compute_insertion_table, compute_insertion_masks
+from learn2assemble.simulator_cpu_parallel import gurobi_simulate_parallel
 import math
 
 
@@ -138,7 +139,7 @@ def compute_policy_labels(solution_dict: dict,
                           table_insertion,
                           boundary_part_ids: list = [],
                           *simulator):
-    n_sim_buffer = 512
+    n_sim_buffer = 1024
     part_states = []
     for key in solution_dict.keys():
         part_states.append(np.array(key, dtype=np.int32))
@@ -308,13 +309,14 @@ def simulate_buffer(part_states, n_buffer, boundary_part_ids, *simulator):
             break
         test_states, n_test = ipm_get_states(states, boundary_part_ids, n_buffer)
         _, test_flag = simulate(simulator[0], simulator[1], test_states, simulator[2])
-        flag[it: it + n_test] = test_flag[:n_test].numpy()
+        test_flag = test_flag.numpy()
+        #test_flag = gurobi_simulate_parallel(simulator[0], simulator[1], test_states, simulator[2])
+        flag[it: it + n_test] = test_flag[:n_test]
         states = states[n_test:, :]
         it += n_test
         if progress is not None:
             progress.update()
     return flag[:it], it
-
 
 def compute_height_weights(parts, part_states):
     heights = [part.centroid[2] for part in parts]
@@ -470,13 +472,13 @@ if __name__ == '__main__':
     default_settings['curriculum']['verbose'] = True
     default_settings['rbe']['velocity_tol'] = 1E-2
     default_settings['rbe']['mu'] = 0.2
-    default_settings['gurobi'] = {}
+    #default_settings['gurobi'] = {}
     default_settings["assembly"]["contact_shrink_ratio"] = 0.1  # for robustnessly computing the contact surfaces
     default_settings['curriculum']['n_beam'] = 64
     default_settings['curriculum']['n_sim_batch'] = 512
     #default_settings['insertion']['type'] = 'planar'
     # default_settings['env']['boundary_part_ids'] = [len(parts) - 1]
-    default_settings['ipm']["n_pcg_iter"] = 200
+    #default_settings['ipm']["n_pcg_iter"] = 200
 
     contacts = compute_assembly_contacts(parts, default_settings)
     table_insertion, drts = compute_insertion_table(parts, default_settings)
