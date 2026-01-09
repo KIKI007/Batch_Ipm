@@ -208,7 +208,7 @@ def gurobi_simulate_parallel_proc(settings_cpu,
         out_queue.put((job_id, velocity.cpu(), flags.cpu()))
     return
 
-def gurobi_simulate_parallel(batch_part_states: list[dict], settings: dict):
+def gurobi_simulate_parallel_init(settings: dict)
     n_parallel = settings['gurobi'].get('nsim', 32)
 
     manager = mp.Manager()
@@ -225,6 +225,22 @@ def gurobi_simulate_parallel(batch_part_states: list[dict], settings: dict):
         jobs.append(p)
         p.start()
         print(f"start process {id}")
+
+    return jobs, in_queue, out_queue
+
+def gurobi_simulate_terminate(*simulator):
+    jobs, in_queue, out_queue = simulator[0], simulator[1], simulator[2]
+    # end simulation
+    # for stop the solver
+    for id in range(len(jobs)):
+        in_queue.put(None)
+
+    # terminate all process
+    for proc in jobs:
+        proc.join()
+
+def gurobi_simulate_parallel(batch_part_states: list[dict], *simulator):
+    jobs, in_queue, out_queue = simulator[0], simulator[1], simulator[2]
 
     torch.cuda.synchronize()
     timer = perf_counter()
@@ -252,14 +268,6 @@ def gurobi_simulate_parallel(batch_part_states: list[dict], settings: dict):
         stable_flag.append(return_dict[id][1])
     velocity = torch.vstack(velocity)
     stable_flag = torch.hstack(stable_flag)
-    # end simulation
-    # for stop the solver
-    for id in range(n_parallel):
-        in_queue.put(None)
-
-    # terminate all process
-    for proc in jobs:
-        proc.join()
 
     print("avg time", (perf_counter() - timer) / stable_flag.shape[0])
     return velocity, stable_flag
@@ -285,7 +293,7 @@ if __name__ == '__main__':
     name = "tetris-999"
     parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + f"/{name}")
     boundary = [0]
-    default_settings['gurobi'] = {"nsim": 64}
+    default_settings['gurobi'] = {"nsim": 8}
     default_settings['env']['boundary_part_ids'] = boundary
 
     filename = os.path.join(RESOURCE_DIR, f"curriculum/{name}.pt")
@@ -324,4 +332,7 @@ if __name__ == '__main__':
 
 
     init_rbe(parts, contacts, default_settings)
-    v_fp32, stable_fp32 = gurobi_simulate_parallel(part_states, default_settings)
+    simulator = gurobi_simulate_parallel_init(default_settings)
+    for id in range(8):
+        v_fp32, stable_fp32 = gurobi_simulate_parallel(part_states, simulator)
+    gurobi_simulate_terminate(simulator)
