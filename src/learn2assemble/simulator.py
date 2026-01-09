@@ -636,7 +636,7 @@ def init_gurobi(settings: dict):
     }
 
 def gurobi_simulate(batch_part_states: list[dict], settings: dict):
-    reset_timer('gurobi')
+    #reset_timer('gurobi')
     env = settings["gurobi"]["env"]
 
     # rbe
@@ -678,7 +678,7 @@ def gurobi_simulate(batch_part_states: list[dict], settings: dict):
     vs = torch.tensor(vs, device ="cpu", dtype=torch.float32)
     vs = vs.T
     flags = torch.tensor(flags, device ="cpu", dtype=torch.bool)
-    end_timer('gurobi')
+    #end_timer('gurobi')
     return vs, flags
 
 def simulate(parts: list[Trimesh],
