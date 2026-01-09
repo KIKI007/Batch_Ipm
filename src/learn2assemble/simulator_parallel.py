@@ -285,7 +285,7 @@ if __name__ == '__main__':
     name = "tetris-999"
     parts = load_assembly_from_files(ASSEMBLY_RESOURCE_DIR + f"/{name}")
     boundary = [0]
-    default_settings['gurobi'] = {"nsim": 16}
+    default_settings['gurobi'] = {"nsim": 64}
     default_settings['env']['boundary_part_ids'] = boundary
 
     filename = os.path.join(RESOURCE_DIR, f"curriculum/{name}.pt")
