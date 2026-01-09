@@ -226,6 +226,7 @@ def gurobi_simulate_parallel(batch_part_states: list[dict], settings: dict):
         p.start()
         print(f"start process {id}")
 
+    timer = perf_counter()
     # start simulation
     n_step = batch_part_states.shape[0]
     for id in range(n_step):
@@ -249,7 +250,6 @@ def gurobi_simulate_parallel(batch_part_states: list[dict], settings: dict):
         stable_flag.append(return_dict[id][1])
     velocity = torch.vstack(velocity)
     stable_flag = torch.hstack(stable_flag)
-
     # end simulation
     # for stop the solver
     for id in range(n_parallel):
@@ -259,6 +259,7 @@ def gurobi_simulate_parallel(batch_part_states: list[dict], settings: dict):
     for proc in jobs:
         proc.join()
 
+    print("avg time", (perf_counter() - timer) / n_batch)
     return velocity, stable_flag
 
 if __name__ == '__main__':
@@ -319,7 +320,6 @@ if __name__ == '__main__':
     # v_fp32, stable_fp32, avg_sim_time, avg_success_rate = ipm_simulate_parallel(sim_datas, simulators)
     # ipm_terminate(simulators)
 
-    timer = perf_counter()
+
     init_rbe(parts, contacts, default_settings)
     v_fp32, stable_fp32 = gurobi_simulate_parallel(part_states, default_settings)
-    print("avg time", (perf_counter() - timer) / n_batch)
